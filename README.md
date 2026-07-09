@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&weight=700&size=30&duration=2200&pause=900&color=D4AF37&center=true&vCenter=true&width=720&lines=Barena;Agent+Capability+Customs;Agents+Can+Grow.;Growth+Should+Be+Reviewable." alt="Barena typing animation" />
+
 # Barena
 
 ### Agent capability customs for skills, roles, tools, prompts, and runtime changes
