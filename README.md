@@ -1,54 +1,56 @@
 <div align="center">
 
-<img src="assets/hero.gif" alt="Agents can grow. Barena makes growth reviewable." width="100%" />
+<img src="assets/hero.gif" alt="Barena — end-to-end testing and release CI for AI agents." width="100%" />
 
 # Barena
 
-### Agent capability customs for skills, roles, tools, prompts, and runtime changes
+### End-to-end testing and release CI for AI agents
 
 [![Barena](https://img.shields.io/badge/Barena-v0.1.0-6B7280.svg?labelColor=111827)](https://github.com/fightheyyy/barena)
+[![Agent E2E](https://img.shields.io/badge/AI_Agent-E2E_Testing-D4A72C.svg?labelColor=111827)](#coming-soon-real-agent-e2e-testing)
+[![Coming Soon](https://img.shields.io/badge/real_runtime-coming_soon-F59E0B.svg?labelColor=111827)](#coming-soon-real-agent-e2e-testing)
 [![Node](https://img.shields.io/badge/Node.js-18+-6B7280.svg?labelColor=339933)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-CLI-6B7280.svg?labelColor=3178C6)](https://www.typescriptlang.org/)
 [![Runtime](https://img.shields.io/badge/runtime-deterministic-6B7280.svg?labelColor=7C3AED)](#current-runtime-boundary)
 [![License](https://img.shields.io/badge/License-Apache--2.0-6B7280.svg?labelColor=16A34A)](#license)
 
-**Agents can grow. Growth should be reviewable.**
+**When code becomes a black box, behavior becomes the contract. Barena tests the contract.**
 
-[Why](#why) · [Core Loop](#core-loop) · [What Barena Clears](#what-barena-clears) · [Quick Start](#quick-start) · [Boundaries](#boundaries)
+[Why Agent E2E](#why-agent-e2e-testing) · [How It Works](#how-it-works) · [Coming Soon](#coming-soon-real-agent-e2e-testing) · [Quick Start](#quick-start) · [Boundaries](#boundaries)
 
 </div>
 
 ---
 
-> What if every new agent capability had to pass customs before it became trusted?
+> What if every agent release had to prove it could still complete real user tasks?
 
-Barena is a local CI system for agent capabilities. Before a skill, role, tool, prompt, runtime change, or agent target becomes trusted, Barena imports it as a subject, scans it, runs it in a clean workspace when allowed, records evidence, replays attempts, and emits a scorecard.
+Barena is an open-source end-to-end testing and release CI project for AI agents. It treats the agent system — model, prompt, skills, tools, memory, and runtime — as a black box, then evaluates observable behavior with clean runs, traces, artifacts, replay evidence, verifiers, and release decisions.
 
-Barena does not accept "I finished" as proof. It asks for traces, artifacts, replay evidence, verifier output, issues, and a decision: `cleared`, `held`, or `rejected`.
+The current MVP provides deterministic local capability clearance for skills and agent target profiles. **Real-runtime, task-level Agent E2E testing is coming soon.**
 
 ---
 
-## Why
+## Why Agent E2E Testing
 
-Agent systems increasingly gain new skills, tools, roles, memory behaviors, runtime adapters, and automation paths. The risky part is not only whether an agent can complete one task. The risky part is deciding when a new capability is safe enough to reuse.
+An AI agent's behavior is no longer defined by code alone. It emerges from model decisions, prompts, skills, tool calls, memory, permissions, environment state, and external services. Reading the implementation cannot prove that the system will finish the user's job correctly.
 
-Barena turns that trust decision into an evidence trail.
+Every model swap, prompt edit, new skill, or tool change can introduce a silent regression. Barena moves trust from implementation inspection to end-to-end behavioral evidence.
 
-| Trust question | Barena evidence |
+| Release question | Barena evidence |
 |---|---|
-| What changed? | Subject manifest, source path, fingerprint |
+| What agent capability changed? | Subject manifest, source path, fingerprint |
 | Is it safe enough to run? | Static scan findings |
-| What happened during execution? | Trace events and artifacts |
-| Can it repeat the behavior? | Replay attempts |
-| Did an external check pass? | Optional verifier result |
-| Should it be trusted? | Scorecard decision |
+| What happened end to end? | Trace events and artifacts |
+| Did it produce the correct outcome? | Verifier result |
+| Is the behavior stable? | Replay attempts |
+| Should this release be trusted? | `cleared`, `held`, or `rejected` |
 
 ---
 
-## Core Loop
+## How It Works
 
 ```text
-new capability
+agent release candidate
   -> import as subject
   -> static scan
   -> clean run
@@ -59,7 +61,22 @@ new capability
   -> cleared | held | rejected
 ```
 
-This makes Barena closer to a capability admission gate than a benchmark leaderboard. The point is not one pretty score. The point is whether an agent capability can cross the trust boundary with evidence attached.
+Barena is a release gate, not a benchmark leaderboard. The goal is not one impressive score; it is repeatable proof that an agent capability can cross a trust boundary without breaking expected behavior.
+
+---
+
+## Coming Soon: Real Agent E2E Testing
+
+Barena is evolving from deterministic capability clearance into a real-runtime E2E testing layer for AI agents.
+
+- Run real multi-turn tasks against XiaoBa, OpenCode, Hermes Agent, and OpenClaw.
+- Define reusable E2E cases with task prompts, fixtures, permissions, and assertions.
+- Verify final state across files, Git repositories, browser sessions, artifacts, and allowed side effects.
+- Replay cases to detect flaky agent behavior.
+- Compare releases to surface capability regressions after model, prompt, skill, or tool changes.
+- Gate agent releases in CI with evidence-backed pass, hold, or reject decisions.
+
+The first real runtime target is the XiaoBa `AgentSession` bridge. Until that lands, the runtime badge and generated scorecards explicitly report the deterministic adapter boundary.
 
 ---
 
@@ -70,14 +87,16 @@ This makes Barena closer to a capability admission gate than a benchmark leaderb
 | Local `SKILL.md` directory | Supported | Import, scan, run, replay, report |
 | GitHub skill repository | Supported | Clone-and-scan only; no install scripts |
 | Built-in agent target profile | Supported | `opencode`, `xiaoba`, `hermes`, `openclaw` |
-| `role + skill` bundle | Planned | Targeted after skill-only MVP1 stabilizes |
-| Real runtime adapter | Planned | XiaoBa AgentSession bridge is not invoked yet |
+| `role + skill` bundle | Coming soon | Targeted after skill-only MVP1 stabilizes |
+| Real runtime E2E adapter | Coming soon | XiaoBa AgentSession bridge is not invoked yet |
+| Reusable E2E case format | Coming soon | Task, fixtures, permissions, and state assertions |
+| Cross-version regression report | Coming soon | Compare pass, fail, and flaky behavior between releases |
 
 ---
 
 ## MVP1
 
-Barena MVP1 is a TypeScript CLI/TUI product for local capability clearance.
+Barena MVP1 is a TypeScript CLI/TUI foundation for local capability clearance and the future Agent E2E runner.
 
 | Area | Capability |
 |---|---|
@@ -214,7 +233,7 @@ adapter: xiaoba-compatible
 xiaoba_invoked: false
 ```
 
-It does **not** invoke XiaoBa-CLI or `AgentSession` by default. A future adapter may call XiaoBa Arena or AgentSession when explicitly configured.
+It does **not** invoke XiaoBa-CLI or `AgentSession` by default. The real-runtime E2E adapter is **coming soon** and will remain explicitly opt-in.
 
 ---
 
@@ -225,9 +244,9 @@ Barena is not:
 - A complete malware detector.
 - A hosted benchmark leaderboard.
 - An automatic production promotion system.
-- A replacement for tests, code review, or runtime sandboxing.
+- A replacement for unit tests, code review, or runtime sandboxing.
 
-Barena is a local admission gate for making agent growth inspectable.
+Barena adds the end-to-end behavioral tests that agent releases increasingly depend on.
 
 This repository deliberately does not copy XiaoBa product surfaces such as Dashboard, Electron, Pet, Feishu, Weixin, output logs, or secrets. The runtime integration point is `src/adapters/xiaoba`.
 
