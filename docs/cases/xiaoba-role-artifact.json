@@ -1,0 +1,20 @@
+{
+  "schema": "barena.xiaoba_native_case.v1",
+  "case_id": "xiaoba-role-artifact",
+  "purpose": "effectiveness",
+  "task": {
+    "prompt": "FAKE_REQUIRE_ROLE:candidate-role\nCreate result.txt in the workspace. Its first line must be exactly BARENA_XIAOBA_OK, followed by the active Role ID."
+  },
+  "assertions": {
+    "artifacts": [
+      {
+        "path": "result.txt",
+        "contains": "BARENA_XIAOBA_OK"
+      }
+    ]
+  },
+  "max_turns": 4,
+  "replay_attempts": 1,
+  "max_replay_cases": 1,
+  "timeout_ms": 600000
+}

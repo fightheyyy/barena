@@ -1,0 +1,10 @@
+{
+  "name": "candidate-role",
+  "displayName": "Candidate Role",
+  "description": "Fixture candidate Role that does not inherit Base Skills.",
+  "promptFile": "prompts/fixture-system-prompt.md",
+  "aliases": ["candidate-fixture"],
+  "inheritBaseSkills": false,
+  "inheritBaseTools": false,
+  "baseToolAllowlist": ["read_file", "write_file"]
+}

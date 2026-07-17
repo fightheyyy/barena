@@ -1,0 +1,1 @@
+Barena fixture for the first open-source Agent E2E case.

@@ -1,0 +1,67 @@
+{
+  "name": "barena",
+  "version": "0.1.0",
+  "description": "End-to-end testing and release CI for AI agents, skills, prompts, tools, and runtime changes.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./e2e": {
+      "types": "./dist/e2e/index.d.ts",
+      "default": "./dist/e2e/index.js"
+    },
+    "./evaluation": {
+      "types": "./dist/evaluation/index.d.ts",
+      "default": "./dist/evaluation/index.js"
+    }
+  },
+  "bin": {
+    "barena": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "dev": "tsx src/index.ts",
+    "test": "tsx --test test/*.test.ts",
+    "check": "npm run build && npm test",
+    "pack:dry-run": "npm pack --dry-run",
+    "prepack": "npm run check"
+  },
+  "keywords": [
+    "agent",
+    "ai-agent",
+    "llm-agent",
+    "agent-testing",
+    "agent-evals",
+    "e2e",
+    "end-to-end-testing",
+    "regression-testing",
+    "agent-ci",
+    "eval",
+    "skills",
+    "governance",
+    "clearance"
+  ],
+  "author": "Barena contributors",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/figlet": "^1.7.0",
+    "@types/node": "^20.10.5",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "figlet": "^1.11.0"
+  }
+}
