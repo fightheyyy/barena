@@ -16,35 +16,30 @@ import { readNdjson, writeJson } from "../src/utils/fs";
 
 const fakeOpenClaw = path.resolve("test/fixtures/targets/fake-openclaw.mjs");
 
-test("paired Skill evaluation clears only a stable verifier-backed lift over baseline", async () => {
+test("paired OpenClaw Skill evaluation clears stable portable verifier lift", async () => {
   const fixture = makeEvaluationFixture("FAKE_REQUIRE_SKILL");
   const result = await runSkillEvaluation({
     skillPath: fixture.skillPath,
     cases: [fixture.casePath],
     attemptsPerArm: 2,
     runsRoot: fixture.runsRoot,
-    evaluator: new TestXiaoBaEvaluator(),
     targetAdapter: fakeOpenClawAdapter(),
   });
 
   assert.equal(result.decision, "cleared");
   assert.equal(result.reason_code, "positive_lift");
+  assert.equal(result.evaluation_mode, "portable_verifier");
+  assert.equal(result.evidence_profile, "boundary_verified");
   assert.equal(result.outcome_truth.status, "verified");
-  assert.equal(result.effectiveness.baseline_pass_rate.value, 0);
-  assert.equal(result.effectiveness.candidate_pass_rate.value, 1);
   assert.equal(result.effectiveness.observed_lift, 1);
   assert.equal(result.quality.baseline, "stable_failure");
   assert.equal(result.quality.candidate, "stable_pass");
   assert.equal(result.quality.required_evidence_complete, true);
-  assert.equal(result.quality.target_native_trace_available, false);
-
-  const candidateAttempt = result.candidate.run_refs[0].scorecard.attempts[0];
-  const events = readNdjson<{ message: string; data?: { selected_skill_visible?: boolean } }>(candidateAttempt.trace_ref);
-  assert.equal(events.some((event) => event.data?.selected_skill_visible === true), true);
-  const invocation = JSON.parse(fs.readFileSync(path.join(candidateAttempt.workspace, "fake-openclaw-invocation.json"), "utf8")) as {
-    eligibleSkills: string[];
-  };
-  assert.deepEqual(invocation.eligibleSkills, ["test-skill"]);
+  assert.equal(result.admission?.decision, "pass");
+  assert.equal(result.baseline.run_refs.length, 1);
+  assert.equal(result.candidate.run_refs.length, 1);
+  assert.equal([...result.baseline.run_refs, ...result.candidate.run_refs]
+    .every((run) => run.scorecard.evaluator.runtime === "barena-portable"), true);
 });
 
 test("paired Skill evaluation holds a candidate that passes but does not beat baseline", async () => {
@@ -54,7 +49,6 @@ test("paired Skill evaluation holds a candidate that passes but does not beat ba
     cases: [fixture.casePath],
     attemptsPerArm: 2,
     runsRoot: fixture.runsRoot,
-    evaluator: new TestXiaoBaEvaluator(),
     targetAdapter: fakeOpenClawAdapter(),
   });
 
@@ -82,8 +76,8 @@ test("Skill evaluation validates SKILL.md and persists an honest paired blocked 
   assert.equal(result.reason_code, "xiaoba_external_agent_mode_unavailable");
   assert.equal(result.effectiveness.observed_lift, null);
   assert.equal(result.outcome_truth.status, "unverified");
-  assert.equal(result.baseline.run_refs[0].scorecard.target.status, "not_started");
-  assert.equal(result.candidate.run_refs[0].scorecard.attempts.length, 0);
+  assert.equal(result.baseline.run_refs.length, 1);
+  assert.equal(result.candidate.run_refs.length, 1);
   assert.equal(fs.existsSync(path.join(fixture.runsRoot, result.evaluation_id, "skill-evaluation.json")), true);
 });
 

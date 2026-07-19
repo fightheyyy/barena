@@ -4,6 +4,7 @@ import readline from "node:readline";
 import { loadAgentE2ECase } from "../e2e/case-runner";
 import { BoundaryTraceEvent } from "../e2e/types";
 import { loadSkillSelection, runSkillEvaluation } from "../evaluation/run-skill-evaluation";
+import { loadXiaoBaLivePolicy } from "../evaluation/live-policy";
 import {
   createXiaoBaNativeRoleRequest,
   createXiaoBaNativeSkillRequest,
@@ -11,7 +12,14 @@ import {
 } from "../evaluation/xiaoba-native-input";
 import { runXiaoBaNativeEvaluation } from "../evaluation/xiaoba-native-runner";
 import { XiaoBaNativeAttemptResult } from "../evaluation/xiaoba-native-types";
-import { readJson, readNdjson } from "../utils/fs";
+import { listRunRecords } from "../runs/catalog";
+import { resolveTrustedRunFile } from "../runs/path-safety";
+import {
+  isCompleteSkillEvaluationRun,
+  isCompleteXiaoBaCapabilityRun,
+} from "../runs/type-guards";
+import { PortableTargetAdapter } from "../targets/portable-target-adapter";
+import { readNdjson } from "../utils/fs";
 import {
   AnyEvaluationResult,
   EvaluationTuiAction,
@@ -30,6 +38,8 @@ export interface StartEvaluationTuiOptions {
   xiaobaCommand?: string;
   xiaobaProjectRoot?: string;
   xiaobaRolesRoot?: string;
+  livePolicyPath?: string;
+  preflightOnly?: boolean;
 }
 
 export async function startEvaluationTui(options: StartEvaluationTuiOptions = {}): Promise<void> {
@@ -44,7 +54,7 @@ export async function startEvaluationTui(options: StartEvaluationTuiOptions = {}
   process.stdin.setRawMode(true);
   process.stdin.resume();
   let active = true;
-  let processing = false;
+  let keyQueue: Promise<void> = Promise.resolve();
 
   const render = (): void => {
     process.stdout.write("\x1b[?25l\x1b[2J\x1b[H");
@@ -72,18 +82,26 @@ export async function startEvaluationTui(options: StartEvaluationTuiOptions = {}
       const transition = reduceEvaluationTui(state, action);
       state = transition.state;
       if (before.screen === "previous" && state.screen === "result" && state.result) {
-        state = { ...state, traceEvents: loadEvaluationTrace(state.result) };
+        state = {
+          ...state,
+          traceEvents: state.resultRoot ? loadEvaluationTrace(state.result, state.resultRoot) : [],
+        };
       }
       render();
       await performEffect(transition.effect, runsRoot, options, (nextAction) => dispatch(nextAction), cleanup);
     };
 
     const onKeypress = (text: string, key: { name?: string; ctrl?: boolean }): void => {
-      if (!active || processing) return;
-      processing = true;
-      void dispatch({ type: "key", name: key?.name, ctrl: key?.ctrl, text })
-        .catch((error) => dispatch({ type: "error", message: errorMessage(error) }))
-        .finally(() => { processing = false; });
+      if (!active || state.screen === "running") return;
+      keyQueue = keyQueue.then(async () => {
+        if (!active) return;
+        try {
+          await dispatch({ type: "key", name: key?.name, ctrl: key?.ctrl, text });
+        } catch (error) {
+          await dispatch({ type: "error", message: errorMessage(error) });
+        }
+      });
+      void keyQueue;
     };
 
     process.stdin.on("keypress", onKeypress);
@@ -109,7 +127,7 @@ async function performEffect(
       const name = effect.capability === "skill" ? loadSkillSelection(effect.value).name : validateRoleId(effect.value);
       await dispatch({ type: "candidate_valid", name });
     } catch (error) {
-      await dispatch({ type: "error", message: errorMessage(error) });
+      await dispatch({ type: "error", message: errorMessage(error), returnScreen: "candidate" });
     }
     return;
   }
@@ -120,17 +138,27 @@ async function performEffect(
         await dispatch({ type: "case_valid", caseId: loaded.case_id });
       } else {
         const loaded = loadAgentE2ECase(effect.path);
-        if (loaded.caseDefinition.target.adapter !== "openclaw") {
+        if (effect.runtime === "openclaw" && loaded.caseDefinition.target.adapter !== "openclaw") {
           throw new Error("OpenClaw evaluation requires case target.adapter=openclaw");
         }
-        await dispatch({ type: "case_valid", caseId: loaded.caseDefinition.case_id });
+        if (effect.runtime === "portable" && loaded.caseDefinition.target.adapter !== "portable") {
+          throw new Error("Hermes/custom evaluation requires case target.adapter=portable");
+        }
+        await dispatch({
+          type: "case_valid",
+          caseId: loaded.caseDefinition.case_id,
+          targetRuntime: loaded.caseDefinition.target.runtime,
+        });
       }
     } catch (error) {
-      await dispatch({ type: "error", message: errorMessage(error) });
+      await dispatch({ type: "error", message: errorMessage(error), returnScreen: "case" });
     }
     return;
   }
   try {
+    const live = effect.runtime === "xiaoba"
+      ? loadXiaoBaLivePolicy(requiredLivePolicyPath(options.livePolicyPath))
+      : undefined;
     const result = effect.runtime === "xiaoba"
       ? await runXiaoBaNativeEvaluation({
           request: effect.capability === "skill"
@@ -153,29 +181,61 @@ async function performEffect(
                 rolesRoot: options.xiaobaRolesRoot,
               }),
           runs_root: runsRoot,
+          accepted_scan_finding_ids: live!.policy.accepted_scan_finding_ids,
+          live_policy_binding: live!,
+          preflight_only: options.preflightOnly,
         })
-      : await runSkillEvaluation({
-          skillPath: effect.candidateInput,
-          cases: [effect.casePath],
-          attemptsPerArm: effect.attempts,
-          runsRoot,
-        });
-    await dispatch({ type: "result", result, traceEvents: loadEvaluationTrace(result) });
+      : effect.runtime === "openclaw"
+        ? await runSkillEvaluation({
+            skillPath: effect.candidateInput,
+            cases: [effect.casePath],
+            attemptsPerArm: effect.attempts,
+            runsRoot,
+          })
+        : await runPortableSkillEvaluation(effect, runsRoot);
+    const resultRoot = evaluationRoot(result);
+    await dispatch({
+      type: "result",
+      result,
+      resultRoot,
+      traceEvents: resultRoot ? loadEvaluationTrace(result, resultRoot) : [],
+    });
   } catch (error) {
-    await dispatch({ type: "error", message: errorMessage(error) });
+    await dispatch({ type: "error", message: errorMessage(error), returnScreen: "review" });
   }
 }
 
-export function loadEvaluationTrace(result: AnyEvaluationResult): TraceViewEvent[] {
+async function runPortableSkillEvaluation(
+  effect: Extract<EvaluationTuiEffect, { type: "run" }>,
+  runsRoot: string
+): Promise<AnyEvaluationResult> {
+  if (!effect.portableRuntime) throw new Error("Portable case is missing target.runtime");
+  if (!effect.targetCommand) throw new Error("Portable target driver command is required");
+  return runSkillEvaluation({
+    skillPath: effect.candidateInput,
+    cases: [effect.casePath],
+    attemptsPerArm: effect.attempts,
+    runsRoot,
+    targetId: effect.portableRuntime,
+    targetAdapter: new PortableTargetAdapter({
+      command: effect.targetCommand,
+      runtime: effect.portableRuntime,
+    }),
+  });
+}
+
+export function loadEvaluationTrace(result: AnyEvaluationResult, runRoot: string): TraceViewEvent[] {
   if (result.schema === "barena.xiaoba_capability_evaluation_result.v1") {
-    return loadXiaoBaEvaluationTrace(result.baseline.attempts, result.candidate.attempts);
+    return loadXiaoBaEvaluationTrace(result.baseline.attempts, result.candidate.attempts, runRoot);
   }
   const events: TraceViewEvent[] = [];
   for (const armResult of [result.baseline, result.candidate]) {
     const arm = armResult === result.baseline ? "baseline" as const : "candidate" as const;
     for (const run of armResult.run_refs) {
       for (const attempt of run.scorecard.attempts) {
-        for (const event of readNdjson<BoundaryTraceEvent>(attempt.trace_ref)) {
+        const traceRef = trustedFile(runRoot, attempt.trace_ref);
+        if (!traceRef) continue;
+        for (const event of readNdjson<BoundaryTraceEvent>(traceRef)) {
           events.push({
             arm,
             case_id: run.case_id,
@@ -196,59 +256,71 @@ export function loadEvaluationTrace(result: AnyEvaluationResult): TraceViewEvent
 }
 
 export function loadPreviousEvaluations(runsRoot: string): PreviousEvaluation[] {
-  if (!fs.existsSync(runsRoot)) return [];
-  return fs.readdirSync(runsRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && (entry.name.startsWith("skill-eval-") || entry.name.startsWith("xiaoba-")))
-    .flatMap((entry): PreviousEvaluation[] => {
-      for (const file of ["skill-evaluation.json", "capability-evaluation.json", "evaluation-result.json"]) {
-        const resultRef = path.join(runsRoot, entry.name, file);
-        if (!fs.existsSync(resultRef)) continue;
-        try {
-          const result = readJson<AnyEvaluationResult>(resultRef);
-          if (["barena.skill_evaluation.v1", "barena.xiaoba_capability_evaluation_result.v1"].includes(result.schema)) {
-            return [{ result, result_ref: resultRef }];
-          }
-        } catch {
-          // A malformed historical result is ignored instead of breaking TUI startup.
-        }
+  return listRunRecords(runsRoot)
+    .filter((run) => run.kind === "skill_evaluation" || run.kind === "xiaoba_capability")
+    .flatMap((run): PreviousEvaluation[] => {
+      if (isCompleteSkillEvaluationRun(run.result) || isCompleteXiaoBaCapabilityRun(run.result)) {
+        return [{ result: run.result, result_ref: run.result_ref, run_root: run.run_root }];
       }
       return [];
     })
     .sort((left, right) => right.result.created_at.localeCompare(left.result.created_at));
 }
 
+function evaluationRoot(result: AnyEvaluationResult): string | undefined {
+  if (typeof result.request_ref !== "string" || !result.request_ref) return undefined;
+  const root = path.dirname(path.resolve(result.request_ref));
+  return fs.existsSync(root) && fs.statSync(root).isDirectory() ? root : undefined;
+}
+
+function trustedFile(runRoot: string, ref: string): string | undefined {
+  try {
+    return resolveTrustedRunFile(runRoot, ref);
+  } catch {
+    return undefined;
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function requiredLivePolicyPath(value: string | undefined): string {
+  if (!value) {
+    throw new Error("XiaobaOS TUI evaluation requires --live-policy <policy.json>; use --preflight-only to stop before provider execution.");
+  }
+  return value;
 }
 
 function validateRoleId(value: string): string {
   const roleId = value.trim();
   if (!/^[A-Za-z0-9._-]+$/.test(roleId)) {
-    throw new Error("XiaoBa Role ID must contain only letters, numbers, dot, underscore, or dash");
+    throw new Error("XiaobaOS Role ID must contain only letters, numbers, dot, underscore, or dash");
   }
   return roleId;
 }
 
 function loadXiaoBaEvaluationTrace(
   baseline: XiaoBaNativeAttemptResult[],
-  candidate: XiaoBaNativeAttemptResult[]
+  candidate: XiaoBaNativeAttemptResult[],
+  runRoot: string
 ): TraceViewEvent[] {
   const events: TraceViewEvent[] = [];
   for (const [arm, attempts] of [["baseline", baseline], ["candidate", candidate]] as const) {
     for (const attempt of attempts) {
       const boundaryRefs = acceptedEvidenceRefs(attempt, "boundary", [attempt.refs.boundary_trace]);
       for (const boundaryRef of boundaryRefs) {
-        for (const boundary of parseJsonLines(boundaryRef)) {
+        for (const boundary of parseJsonLines(boundaryRef, runRoot)) {
           events.push(toTraceEvent(boundary, arm, attempt, "barena", "boundary", boundaryRef));
         }
       }
       for (const nativeRef of acceptedEvidenceRefs(attempt, "native", attempt.refs.native)) {
-        for (const native of parseJsonLines(nativeRef)) {
+        for (const native of parseJsonLines(nativeRef, runRoot)) {
           events.push(toTraceEvent(native, arm, attempt, "xiaoba", "native", nativeRef));
         }
       }
       for (const evaluatorRef of acceptedEvidenceRefs(attempt, "evaluator", attempt.refs.evaluator)) {
-        for (const evaluator of parseJsonLines(evaluatorRef)) {
+        for (const evaluator of parseJsonLines(evaluatorRef, runRoot)) {
           events.push(toTraceEvent(evaluator, arm, attempt, "xiaoba", "evaluator", evaluatorRef));
         }
       }
@@ -266,10 +338,11 @@ function acceptedEvidenceRefs(
   return accepted.length ? accepted : fallback;
 }
 
-function parseJsonLines(filePath: string): Record<string, unknown>[] {
-  if (!filePath || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) return [];
+function parseJsonLines(filePath: string, runRoot: string): Record<string, unknown>[] {
+  const trustedRef = trustedFile(runRoot, filePath);
+  if (!trustedRef) return [];
   const rows: Record<string, unknown>[] = [];
-  for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean)) {
+  for (const line of fs.readFileSync(trustedRef, "utf8").split(/\r?\n/).filter(Boolean)) {
     try {
       const parsed = JSON.parse(line) as unknown;
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) rows.push(parsed as Record<string, unknown>);

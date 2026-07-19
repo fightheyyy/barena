@@ -1,0 +1,22 @@
+[Start]
+Narrator: The tavern door opens. -> TavernChoice
+
+[TavernChoice]
+1. Approach the stranger. -> StrangerPath
+2. Speak with the merchant. -> MerchantPath
+
+[StrangerPath]
+Stranger: The mountain keeps its secrets. -> Rejoin
+
+[MerchantPath]
+Merchant: Supplies are expensive today. -> Rejoin
+
+[Rejoin]
+Narrator: Both paths return you to the center of the room. -> LoopChoice
+
+[LoopChoice]
+1. Ask someone else. -> TavernChoice
+2. Leave the tavern. -> Exit
+
+[Exit]
+Narrator: The night air is cold. -> End

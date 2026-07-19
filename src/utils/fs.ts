@@ -47,30 +47,51 @@ export function copyDirectory(source: string, destination: string): void {
 }
 
 export function hashDirectory(root: string): string {
+  const requestedRoot = path.resolve(root);
+  const absoluteRoot = fs.realpathSync(requestedRoot);
+  if (!fs.statSync(absoluteRoot).isDirectory()) {
+    throw new Error(`Directory fingerprint root must be a directory: ${requestedRoot}`);
+  }
+
   const hash = crypto.createHash("sha256");
-  for (const filePath of listFiles(root)) {
-    const relative = path.relative(root, filePath);
-    hash.update(relative);
-    hash.update(fs.readFileSync(filePath));
+  hash.update("barena-directory-fingerprint-v2\0");
+  for (const entry of listFingerprintEntries(absoluteRoot, absoluteRoot)) {
+    const relativeBytes = Buffer.from(entry.relative, "utf8");
+    const content = entry.type === "file" ? fs.readFileSync(entry.path) : Buffer.alloc(0);
+    const header = Buffer.alloc(13);
+    header.writeUInt8(entry.type === "file" ? 1 : 2, 0);
+    header.writeUInt32BE(relativeBytes.length, 1);
+    header.writeBigUInt64BE(BigInt(content.length), 5);
+    hash.update(header);
+    hash.update(relativeBytes);
+    hash.update(content);
   }
   return hash.digest("hex");
 }
 
-function listFiles(root: string): string[] {
-  const entries = fs.readdirSync(root, { withFileTypes: true });
-  const files: string[] = [];
-  for (const entry of entries) {
-    if ([".git", "node_modules", "dist", "output", "logs"].includes(entry.name)) {
-      continue;
-    }
-    const fullPath = path.join(root, entry.name);
+interface FingerprintEntry {
+  path: string;
+  relative: string;
+  type: "file" | "directory";
+}
+
+function listFingerprintEntries(root: string, current: string): FingerprintEntry[] {
+  const entries: FingerprintEntry[] = [];
+  for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+    if ([".git", "node_modules", "dist", "output", "logs"].includes(entry.name)) continue;
+    const fullPath = path.join(current, entry.name);
+    const relative = path.relative(root, fullPath);
+    if (entry.isSymbolicLink()) throw new Error(`Directory fingerprint input may not contain symlinks: ${fullPath}`);
     if (entry.isDirectory()) {
-      files.push(...listFiles(fullPath));
+      entries.push({ path: fullPath, relative, type: "directory" });
+      entries.push(...listFingerprintEntries(root, fullPath));
     } else if (entry.isFile()) {
-      files.push(fullPath);
+      entries.push({ path: fullPath, relative, type: "file" });
+    } else {
+      throw new Error(`Directory fingerprint input contains a non-regular entry: ${fullPath}`);
     }
   }
-  return files.sort();
+  return entries.sort((left, right) => left.relative.localeCompare(right.relative) || left.type.localeCompare(right.type));
 }
 
 export function slugify(input: string): string {

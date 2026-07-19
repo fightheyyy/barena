@@ -45,6 +45,7 @@ export async function runTargetObservationAttempts(input: {
           : target.status === "failed" || assertions.some((assertion) => assertion.status === "fail")
             ? "fail"
             : "pass";
+    const verifierRef = path.join(attemptRoot, "verifier", "artifact-assertions.json");
     const attempt: AgentE2EAttempt = {
       attempt_id: attemptId,
       status,
@@ -52,9 +53,10 @@ export async function runTargetObservationAttempts(input: {
       assertions,
       workspace,
       trace_ref: tracePath,
+      verifier_ref: verifierRef,
     };
     attempts.push(attempt);
-    writeJson(path.join(attemptRoot, "verifier", "artifact-assertions.json"), assertions);
+    writeJson(verifierRef, assertions);
   }
   return attempts;
 }

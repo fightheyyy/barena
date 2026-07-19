@@ -1,4 +1,5 @@
 import { AgentE2EReasonCode, AgentE2EScorecard } from "../e2e/types";
+import type { StaticAdmissionReasonCode, StaticAdmissionReportV1 } from "./static-admission";
 
 export type CasePurpose = "effectiveness" | "regression" | "safety";
 
@@ -20,8 +21,10 @@ export interface SkillEvaluationRequestV1 {
   schema: "barena.skill_evaluation_request.v1";
   evaluation_id: string;
   created_at: string;
-  target: "openclaw";
-  evaluator_runtime: "xiaoba-cli";
+  target: string;
+  evaluator_runtime: "xiaoba-cli" | "barena-portable";
+  evaluation_mode?: "portable_verifier";
+  evidence_profile?: "boundary_verified";
   baseline: SkillSelection;
   candidate: Extract<SkillSelection, { mode: "path" }>;
   cases: SkillEvaluationCase[];
@@ -76,6 +79,7 @@ export type SkillEvaluationReasonCode =
   | "unstable_result"
   | "no_effect"
   | "positive_lift"
+  | StaticAdmissionReasonCode
   | AgentE2EReasonCode;
 
 export interface SkillEvaluationResultV1 {
@@ -83,6 +87,8 @@ export interface SkillEvaluationResultV1 {
   evaluation_id: string;
   created_at: string;
   request_ref: string;
+  evaluation_mode?: "portable_verifier";
+  evidence_profile?: "boundary_verified";
   decision: "cleared" | "held" | "rejected";
   reason_code: SkillEvaluationReasonCode;
   summary: string;
@@ -105,6 +111,7 @@ export interface SkillEvaluationResultV1 {
   };
   baseline: SkillEvaluationArmResult;
   candidate: SkillEvaluationArmResult;
+  admission?: StaticAdmissionReportV1;
   evidence_refs: string[];
   debug_refs: string[];
 }
@@ -114,5 +121,6 @@ export interface SkillEvaluationAggregateInput {
   requestRef: string;
   baselineRuns: EvaluationRunRef[];
   candidateRuns: EvaluationRunRef[];
+  admission?: StaticAdmissionReportV1;
   debugRefs?: string[];
 }

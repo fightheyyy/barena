@@ -7,9 +7,15 @@ import test from "node:test";
 import {
   createXiaoBaNativeRoleRequest,
   createXiaoBaNativeSkillRequest,
+  loadXiaoBaNativeCase,
 } from "../src/evaluation/xiaoba-native-input";
-import { runXiaoBaNativeEvaluation } from "../src/evaluation/xiaoba-native-runner";
-import { XiaoBaCapabilityEvaluationRequestV1 } from "../src/evaluation/xiaoba-native-types";
+import { bindXiaoBaLivePolicy } from "../src/evaluation/live-policy";
+import { NodeXiaoBaCommandRunner, runXiaoBaNativeEvaluation } from "../src/evaluation/xiaoba-native-runner";
+import {
+  XiaoBaCapabilityEvaluationRequestV1,
+  XiaoBaCommandRunner,
+  XiaoBaLivePolicyV1,
+} from "../src/evaluation/xiaoba-native-types";
 import { loadEvaluationTrace } from "../src/tui/evaluation-tui";
 import { hashDirectory } from "../src/utils/fs";
 
@@ -43,6 +49,9 @@ test("XiaoBa native Skill evaluation proves stable lift, activation, isolation, 
   assert.equal(result.candidate.attempts.every((attempt) => attempt.activation.observed), true);
   assert.equal(result.baseline.attempts.every((attempt) => !attempt.activation.observed), true);
   assert.equal(result.quality.required_evidence_complete, true);
+  assert.equal(result.admission?.decision, "pass");
+  assert.equal(result.admission?.evidence_complete, true);
+  assert.equal(result.admission?.evidence_refs.every((ref) => result.evidence_refs.includes(ref)), true);
   assert.equal(result.quality.evaluator_stages_are_independent_agent_sessions, false);
   assert.equal(result.quality.three_evaluator_agent_sessions, false);
   assert.equal(result.quality.isolation.evaluator_target_process_isolated, false);
@@ -63,7 +72,7 @@ test("XiaoBa native Skill evaluation proves stable lift, activation, isolation, 
     assert.equal(hash, evidence.sha256);
   }
 
-  const trace = loadEvaluationTrace(result);
+  const trace = loadEvaluationTrace(result, path.dirname(result.request_ref));
   assert.equal(trace.some((event) => event.recorded_by === "barena" && event.layer === "boundary"), true);
   assert.equal(trace.some((event) => event.recorded_by === "xiaoba" && event.layer === "native"), true);
 });
@@ -90,6 +99,34 @@ test("XiaoBa native Role evaluation compares an explicit baseline and candidate 
   assert.equal(result.effectiveness.observed_lift, 1);
 });
 
+test("XiaobaOS native runner continues to accept pinned 0.1.1 requests", async () => {
+  const fixture = makeFixture();
+  const legacyBinary = path.join(fixture.root, "fake-xiaoba-0.1.1.mjs");
+  fs.writeFileSync(legacyBinary, `#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === "--version") {
+  process.stdout.write("0.1.1\\n");
+  process.exit(0);
+}
+const result = spawnSync(process.execPath, [${JSON.stringify(fakeXiaoBa)}, ...args], {
+  env: process.env,
+  stdio: "inherit"
+});
+process.exit(result.status ?? 1);
+`, "utf8");
+  fs.chmodSync(legacyBinary, 0o755);
+  const request = skillRequest(fixture, "inherit-base-role");
+  request.xiaoba.binary_path = legacyBinary;
+  request.xiaoba.expected_version = "0.1.1";
+
+  const result = await runXiaoBaNativeEvaluation({ request, runs_root: fixture.runsRoot });
+  assert.equal(result.probe.status, "ready");
+  assert.equal(result.probe.version, "0.1.1");
+  assert.equal(result.probe.expected_version, "0.1.1");
+  assert.equal(result.decision, "cleared");
+});
+
 test("XiaoBa native evaluation fails closed for missing binary, unsupported inheritance, collision, and native evidence gaps", async () => {
   const missing = makeFixture();
   const missingRequest = skillRequest(missing, "inherit-base-role");
@@ -97,7 +134,9 @@ test("XiaoBa native evaluation fails closed for missing binary, unsupported inhe
   const missingResult = await runXiaoBaNativeEvaluation({ request: missingRequest, runs_root: missing.runsRoot });
   assert.equal(missingResult.decision, "held");
   assert.equal(missingResult.reason_code, "xiaoba_binary_not_found");
-  assert.equal(missingResult.evidence_refs.length, 0);
+  assert.equal(missingResult.admission?.decision, "pass");
+  assert.equal(missingResult.evidence_refs.length > 0, true);
+  assert.equal(missingResult.evidence_refs.every((ref) => fs.existsSync(ref)), true);
 
   const inheritance = makeFixture();
   const inheritanceResult = await runXiaoBaNativeEvaluation({
@@ -120,7 +159,10 @@ test("XiaoBa native evaluation fails closed for missing binary, unsupported inhe
   assert.equal(traceResult.decision, "held");
   assert.equal(traceResult.reason_code, "xiaoba_native_trace_missing");
   assert.equal(traceResult.quality.required_evidence_complete, false);
-  assert.equal(traceResult.evidence_refs.length, 2);
+  assert.equal(
+    traceResult.evidence_refs.length,
+    2 + (traceResult.admission?.evidence_refs.length ?? 0)
+  );
   assert.equal([...traceResult.baseline.attempts, ...traceResult.candidate.attempts]
     .every((attempt) => attempt.evidence.some((item) => item.layer === "boundary")), true);
 
@@ -156,6 +198,92 @@ test("XiaoBa native aggregation rejects unsafe candidates and holds no-effect pa
   assert.equal(noEffectResult.reason_code, "no_effect");
 });
 
+test("live hard-limit preflight stops before an injected XiaoBa command runner", async () => {
+  const fixture = makeFixture();
+  const request = skillRequest(fixture, "inherit-base-role");
+  const calls: unknown[] = [];
+  const commandRunner: XiaoBaCommandRunner = {
+    async run(command) {
+      calls.push(command);
+      throw new Error("command runner must not execute before live preflight passes");
+    },
+  };
+  const policy = livePolicy();
+  policy.hard_limit.verified = false;
+
+  const result = await runXiaoBaNativeEvaluation({
+    request,
+    runs_root: fixture.runsRoot,
+    live_policy_binding: bindXiaoBaLivePolicy(policy),
+  }, {
+    command_runner: commandRunner,
+    environment: {
+      PATH: process.env.PATH,
+      FAKE_PROVIDER_KEY: "injected-key",
+      FAKE_PROVIDER_BASE: "https://provider.invalid/v1",
+    },
+  });
+
+  assert.deepEqual(calls, []);
+  assert.equal(result.decision, "held");
+  assert.equal(result.reason_code, "live_hard_limit_unverified");
+  assert.equal(result.live?.ready_to_invoke, false);
+});
+
+test("XiaoBa native cases reject empty, duplicate, and vacuous artifact assertions", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "barena-native-case-validation-"));
+  const casePath = path.join(root, "case.json");
+  const base = {
+    schema: "barena.xiaoba_native_case.v1",
+    case_id: "validation-case",
+    purpose: "effectiveness",
+    task: { prompt: "validate assertions" },
+  };
+  for (const artifacts of [
+    [],
+    [{ path: "result.txt", contains: "" }],
+    [{ path: "result.txt" }, { path: "result.txt", contains: "duplicate" }],
+    [{ path: "result.txt", exists: false, contains: "contradiction" }],
+  ]) {
+    fs.writeFileSync(casePath, JSON.stringify({ ...base, assertions: { artifacts } }), "utf8");
+    assert.throws(() => loadXiaoBaNativeCase(casePath));
+  }
+});
+
+test("policy-free native execution strips provider credentials and selectors", async () => {
+  const fixture = makeFixture();
+  const request = skillRequest(fixture, "inherit-base-role");
+  request.xiaoba.pass_env = ["FAKE_PROVIDER_KEY", "FAKE_PROVIDER_BASE", "XIAOBA_LLM_PROVIDER", "SAFE_TEST_VALUE"];
+  const calls: Array<{ args: string[]; env: NodeJS.ProcessEnv }> = [];
+  const delegate = new NodeXiaoBaCommandRunner();
+  const commandRunner: XiaoBaCommandRunner = {
+    async run(command) {
+      calls.push({ args: command.args, env: command.env });
+      return delegate.run(command);
+    },
+  };
+
+  await runXiaoBaNativeEvaluation({ request, runs_root: fixture.runsRoot }, {
+    command_runner: commandRunner,
+    environment: {
+      PATH: process.env.PATH,
+      FAKE_PROVIDER_KEY: "must-not-propagate",
+      FAKE_PROVIDER_BASE: "https://provider.invalid/v1",
+      XIAOBA_LLM_PROVIDER: "must-not-propagate",
+      SAFE_TEST_VALUE: "safe-fixture-value",
+    },
+  });
+
+  assert.equal(calls.length > 0, true);
+  assert.equal(calls.every((call) => call.env.FAKE_PROVIDER_KEY === undefined), true);
+  assert.equal(calls.every((call) => call.env.FAKE_PROVIDER_BASE === undefined), true);
+  assert.equal(calls.every((call) => call.env.XIAOBA_LLM_PROVIDER === undefined), true);
+  const execute = calls.find((call) =>
+    call.args[0] === "arena" && call.args[1] === "run" && call.args[2] === "execute" && !call.args.includes("--help")
+  );
+  assert.equal(execute?.env.SAFE_TEST_VALUE, "safe-fixture-value");
+});
+
 function skillRequest(
   fixture: ReturnType<typeof makeFixture>,
   roleId: string
@@ -178,4 +306,44 @@ function makeFixture(): { root: string; projectRoot: string; runsRoot: string } 
   fs.mkdirSync(path.join(projectRoot, "dist"), { recursive: true });
   fs.writeFileSync(path.join(projectRoot, "dist", "index.js"), "#!/usr/bin/env node\n", "utf8");
   return { root, projectRoot, runsRoot: path.join(root, "runs") };
+}
+
+function livePolicy(): XiaoBaLivePolicyV1 {
+  const verifiedAt = new Date().toISOString();
+  return {
+    schema: "barena.live_policy.v1",
+    provider: "fixture-provider",
+    model: "fixture-model",
+    credential_env: "FAKE_PROVIDER_KEY",
+    api_base_env: "FAKE_PROVIDER_BASE",
+    max_input_tokens: 1_000,
+    max_output_tokens: 100,
+    max_provider_calls: 10,
+    pricing: {
+      provider: "fixture-provider",
+      model: "fixture-model",
+      api_base_env: "FAKE_PROVIDER_BASE",
+      currency: "USD",
+      input_usd_per_million_tokens: 1,
+      output_usd_per_million_tokens: 2,
+      source: "fixture-price-card",
+      sourced_at: verifiedAt,
+    },
+    budget_usd: 5,
+    worst_case_usd: 0.02,
+    hard_limit: {
+      mode: "prepaid_balance",
+      verified: true,
+      reference: "fixture-hard-limit",
+      verified_at: verifiedAt,
+      provider: "fixture-provider",
+      credential_env: "FAKE_PROVIDER_KEY",
+      api_base_env: "FAKE_PROVIDER_BASE",
+      currency: "USD",
+      cap_usd: 5,
+    },
+    accepted_scan_finding_ids: [],
+    retention: { profile: "private-beta-test" },
+    redaction: { profile: "exact-secret-and-structured-fields", secret_env_names: [] },
+  };
 }

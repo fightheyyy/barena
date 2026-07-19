@@ -1,5 +1,5 @@
 import figlet from "figlet";
-import { Scorecard, SubjectManifest } from "../domain/types";
+import { SubjectManifest } from "../domain/types";
 import { TuiRunSummary, TuiState } from "./state";
 
 type HeroFont = "ANSI Shadow";
@@ -73,7 +73,7 @@ function nav(view: TuiView, width: number, color: boolean): string {
 }
 
 function overview(state: TuiState, width: number, color: boolean): string[] {
-  const latest = state.runs.find((run) => run.scorecard);
+  const latest = state.runs[0];
   const flow = [
     step("1", "IMPORT", "skill / github", color),
     step("2", "SCAN", "static gate", color),
@@ -90,7 +90,7 @@ function overview(state: TuiState, width: number, color: boolean): string[] {
     "",
     metric("Subjects", String(state.subjects.length), color),
     metric("Runs", String(state.runs.length), color),
-    metric("Latest", latest?.scorecard ? summarizeScorecard(latest.scorecard) : "no scorecard yet", color),
+    metric("Latest", latest ? summarizeRun(latest) : "no run yet", color),
   ];
   const right = [
     strong("Why Trust", color),
@@ -129,27 +129,23 @@ function runsView(runs: TuiRunSummary[], selectedIndex: number, width: number, c
   if (runs.length === 0) {
     return box(["No runs yet.", "Run: barena run <subject-id>"], width, color).split("\n");
   }
-  const rows = runs.map((run, index) => {
-    const selected = index === clamp(selectedIndex, runs.length);
-    const scorecard = run.scorecard;
-    return row(
-      selected,
-      [
-        run.run_id,
-        run.subject_id ?? "-",
-        scorecard ? scorecard.decision : "pending",
-        scorecard ? scorecard.status : "no-score",
-        run.created_at ? run.created_at.slice(0, 19) : "-",
-      ],
-      [28, 20, 12, 12, 22],
-      color
-    );
-  });
+  const rows = runs.map((run, index) => row(
+    index === clamp(selectedIndex, runs.length),
+    [
+      run.run_id,
+      run.kind,
+      run.decision,
+      run.status,
+      run.health,
+    ],
+    [28, 20, 12, 16, 16],
+    color
+  ));
   const selected = runs[clamp(selectedIndex, runs.length)];
-  const detail = selected?.scorecard
-    ? ["", strong("Selected Scorecard", color), ...scorecardDetail(selected.scorecard, color)]
+  const detail = selected
+    ? ["", strong("Selected Run", color), ...runDetail(selected, color)]
     : [];
-  return box([strong("Runs", color), headerRow(["run", "subject", "decision", "status", "created"], [28, 20, 12, 12, 22]), ...rows, ...detail], width, color).split("\n");
+  return box([strong("Runs", color), headerRow(["run", "kind", "decision", "status", "health"], [28, 20, 12, 16, 16]), ...rows, ...detail], width, color).split("\n");
 }
 
 function commandsView(width: number, color: boolean): string[] {
@@ -173,12 +169,14 @@ function commandsView(width: number, color: boolean): string[] {
   ).split("\n");
 }
 
-function scorecardDetail(scorecard: Scorecard, color: boolean): string[] {
+function runDetail(run: TuiRunSummary, color: boolean): string[] {
   return [
-    metric("Decision", scorecard.decision, color),
-    metric("Status", scorecard.status, color),
-    metric("Replay", `${scorecard.replay_attempts.pass_count}/${scorecard.replay_attempts.completed} pass`, color),
-    metric("Issues", String(scorecard.issues.length), color),
+    metric("Schema", run.schema, color),
+    metric("Decision", run.decision, color),
+    metric("Status", run.status, color),
+    metric("Reason", run.reason, color),
+    metric("Health", run.health, color),
+    metric("Warnings", String(run.warnings.length), color),
   ];
 }
 
@@ -194,8 +192,8 @@ function badge(label: string, value: string, color: boolean): string {
   return `${accent(label.padEnd(14), color)} ${value}`;
 }
 
-function summarizeScorecard(scorecard: Scorecard): string {
-  return `${scorecard.subject_id} / ${scorecard.decision} / ${scorecard.status}`;
+function summarizeRun(run: TuiRunSummary): string {
+  return `${run.run_id} / ${run.kind} / ${run.decision}`;
 }
 
 function twoColumns(left: string[], right: string[], width: number, color: boolean): string[] {

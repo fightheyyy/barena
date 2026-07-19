@@ -1,0 +1,50 @@
+{
+  "schema": "barena.xiaoba_native_case.v1",
+  "case_id": "skillsbench-dialogue-graph-mini",
+  "purpose": "effectiveness",
+  "task": {
+    "prompt": "Implement a dialogue parser for the branching narrative in script.txt. Create solution.py with a function named parse_script(text: str), then write dialogue.json with the shape {\"nodes\":[{\"id\":\"\",\"text\":\"\",\"speaker\":\"\",\"type\":\"\"}],\"edges\":[{\"from\":\"\",\"to\":\"\",\"text\":\"\"}]}. Use node type line for dialogue blocks and choice for numbered-option blocks. Preserve loops, require every declared node to be reachable from Start, and allow End as the only undeclared terminal target. Do not modify files outside the workspace."
+  },
+  "fixtures": [
+    {
+      "source_path": "../fixtures/script.txt",
+      "destination": "script.txt"
+    }
+  ],
+  "assertions": {
+    "artifacts": [
+      {
+        "path": "solution.py",
+        "contains": "def parse_script"
+      },
+      {
+        "path": "dialogue.json",
+        "json_checks": [
+          { "kind": "type", "pointer": "", "expected": "object" },
+          { "kind": "required_keys", "pointer": "", "keys": ["nodes", "edges"] },
+          { "kind": "array_min_items", "pointer": "/nodes", "min_items": 7 },
+          { "kind": "array_min_items", "pointer": "/edges", "min_items": 9 },
+          { "kind": "array_contains", "pointer": "/nodes", "subset": { "id": "Start", "speaker": "Narrator", "type": "line" } },
+          { "kind": "array_contains", "pointer": "/nodes", "subset": { "id": "TavernChoice", "type": "choice" } },
+          { "kind": "array_contains", "pointer": "/edges", "subset": { "from": "LoopChoice", "to": "TavernChoice" } },
+          { "kind": "array_contains", "pointer": "/edges", "subset": { "from": "Exit", "to": "End" } },
+          {
+            "kind": "directed_graph",
+            "nodes_pointer": "/nodes",
+            "edges_pointer": "/edges",
+            "node_id_key": "id",
+            "edge_from_key": "from",
+            "edge_to_key": "to",
+            "start_id": "Start",
+            "allowed_external_targets": ["End"],
+            "require_all_nodes_reachable": true
+          }
+        ]
+      }
+    ]
+  },
+  "max_turns": 6,
+  "replay_attempts": 1,
+  "max_replay_cases": 1,
+  "timeout_ms": 600000
+}

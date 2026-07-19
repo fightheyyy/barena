@@ -12,6 +12,8 @@ export type AgentE2EReasonCode =
   | "target_protocol_error"
   | "target_process_failed"
   | "target_reported_error"
+  | "target_reported_unsafe"
+  | "evidence_incomplete"
   | "xiaoba_binary_not_found"
   | "xiaoba_cli_error"
   | "xiaoba_external_agent_mode_unavailable"
@@ -24,7 +26,8 @@ export type AgentE2EReasonCode =
   | "skill_not_visible"
   | "baseline_skill_leak"
   | "openclaw_workspace_binding_failed"
-  | "skill_eligibility_probe_failed";
+  | "skill_eligibility_probe_failed"
+  | "openclaw_private_beta_not_supported";
 
 export type TargetSkillConfig =
   | { mode: "none" }
@@ -39,7 +42,8 @@ export interface AgentE2ECaseV1 {
   schema: "barena.agent_e2e_case.v1";
   case_id: string;
   target: {
-    adapter: "openclaw" | "xiaoba";
+    adapter: "openclaw" | "portable" | "xiaoba";
+    runtime?: string;
     agent?: string;
     model?: string;
     thinking?: string;
@@ -69,8 +73,8 @@ export interface AgentE2ECaseV1 {
 }
 
 export interface RuntimeProbeResult {
-  component: "xiaoba-evaluator" | "xiaoba-native-target" | "openclaw-target";
-  status: "ready" | "blocked";
+  component: "xiaoba-evaluator" | "portable-evaluator" | "xiaoba-native-target" | "openclaw-target" | "portable-target";
+  status: "ready" | "blocked" | "not_started";
   reason_code?: AgentE2EReasonCode;
   detail: string;
   command: string;
@@ -124,7 +128,7 @@ export interface TargetInvocationResult {
   exit_code: number | null;
   signal: NodeJS.Signals | null;
   duration_ms: number;
-  transport: "embedded";
+  transport: "embedded" | "portable_json_driver";
   payload_texts: string[];
   media_refs: string[];
   provider?: string;
@@ -157,16 +161,16 @@ export interface EvaluatorRunResult {
   reason_code?: AgentE2EReasonCode;
   detail: string;
   stages: {
-    usercat: "completed" | "blocked";
-    inspectorcat: "completed" | "blocked";
-    reviewercat: "completed" | "blocked";
+    usercat: "completed" | "blocked" | "not_applicable";
+    inspectorcat: "completed" | "blocked" | "not_applicable";
+    reviewercat: "completed" | "blocked" | "not_applicable";
   };
   attempts: AgentE2EAttempt[];
   evaluator_trace_refs: string[];
 }
 
 export interface EvaluatorRuntime {
-  readonly id: "xiaoba-cli";
+  readonly id: "xiaoba-cli" | "barena-portable";
   probe(): Promise<RuntimeProbeResult>;
   runCase(request: EvaluatorRunRequest): Promise<EvaluatorRunResult>;
 }
@@ -191,6 +195,7 @@ export interface AgentE2EAttempt {
   assertions: ArtifactAssertionResult[];
   workspace: string;
   trace_ref: string;
+  verifier_ref: string;
 }
 
 export interface AgentE2EScorecard {
@@ -198,17 +203,19 @@ export interface AgentE2EScorecard {
   run_id: string;
   case_id: string;
   created_at: string;
+  evaluation_mode: "portable_verifier" | "external_evaluator";
+  evidence_profile: "boundary_verified" | "evaluator_traced";
   decision: "cleared" | "held" | "rejected";
   status: "pass" | "unstable" | "blocked" | "unsafe";
   reason_code?: AgentE2EReasonCode;
   summary: string;
   evaluator: {
-    runtime: "xiaoba-cli";
+    runtime: "xiaoba-cli" | "barena-portable";
     probe: RuntimeProbeResult;
     stages: {
-      usercat: "completed" | "blocked";
-      inspectorcat: "completed" | "blocked";
-      reviewercat: "completed" | "blocked";
+      usercat: "completed" | "blocked" | "not_applicable";
+      inspectorcat: "completed" | "blocked" | "not_applicable";
+      reviewercat: "completed" | "blocked" | "not_applicable";
     };
   };
   target: {
@@ -220,6 +227,7 @@ export interface AgentE2EScorecard {
   evidence_coverage: {
     boundary_trace: boolean;
     evaluator_traces: boolean;
+    verifier_evidence: boolean;
     target_native_trace: boolean;
     workspace_observation: boolean;
     observations: BoundaryObservedFrom[];
@@ -228,4 +236,52 @@ export interface AgentE2EScorecard {
   evidence_refs: string[];
   debug_refs: string[];
   isolation: "policy_only";
+}
+
+export interface PortableTargetProbeV1 {
+  schema: "barena.portable_target_probe.v1";
+  status: "ready" | "blocked";
+  target: { id: string; version?: string };
+  detail: string;
+  capabilities: string[];
+}
+
+export interface PortableTargetRequestV1 {
+  schema: "barena.portable_target_request.v1";
+  run_id: string;
+  case_id: string;
+  attempt_id: string;
+  session_id: string;
+  deadline: string;
+  prompt: { path: string; sha256: string };
+  workspace: string;
+  trace_path: string;
+  target: {
+    runtime: string;
+    agent?: string;
+    model?: string;
+    thinking?: string;
+    env_names: string[];
+  };
+  skill: TargetSkillConfig;
+}
+
+export interface PortableTargetResultV1 {
+  schema: "barena.portable_target_result.v1";
+  status: AgentE2ERunStatus;
+  detail: string;
+  session_id?: string;
+  payload_texts?: string[];
+  media_refs?: string[];
+  provider?: string;
+  model?: string;
+  observed: {
+    prompt_sha256: string;
+    workspace: string;
+    skill: {
+      mode: TargetSkillConfig["mode"];
+      active_skill_names: string[];
+      selected_skill_fingerprint?: string;
+    };
+  };
 }

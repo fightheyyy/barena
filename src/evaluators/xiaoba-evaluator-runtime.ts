@@ -37,8 +37,8 @@ export class XiaoBaEvaluatorRuntime implements EvaluatorRuntime {
         reason_code: version.spawnError.code === "ENOENT" ? "xiaoba_binary_not_found" : "xiaoba_cli_error",
         detail:
           version.spawnError.code === "ENOENT"
-            ? "XiaoBa CLI binary was not found on PATH."
-            : `XiaoBa CLI could not start (${version.spawnError.code ?? "unknown error"}).`,
+            ? "XiaobaOS CLI binary was not found on PATH."
+            : `XiaobaOS CLI could not start (${version.spawnError.code ?? "unknown error"}).`,
         command: this.command,
         capabilities: [],
       };
@@ -48,7 +48,7 @@ export class XiaoBaEvaluatorRuntime implements EvaluatorRuntime {
         component: "xiaoba-evaluator",
         status: "blocked",
         reason_code: "xiaoba_cli_error",
-        detail: "XiaoBa CLI version preflight did not complete successfully.",
+        detail: "XiaobaOS CLI version preflight did not complete successfully.",
         command: this.command,
         capabilities: [],
       };
@@ -73,7 +73,7 @@ export class XiaoBaEvaluatorRuntime implements EvaluatorRuntime {
         component: "xiaoba-evaluator",
         status: "blocked",
         reason_code: "xiaoba_cli_error",
-        detail: "XiaoBa Arena execute preflight failed.",
+        detail: "XiaobaOS Arena execute preflight failed.",
         command: this.command,
         version: normalizedVersion(version.stdout, version.stderr),
         capabilities,
@@ -85,7 +85,7 @@ export class XiaoBaEvaluatorRuntime implements EvaluatorRuntime {
         component: "xiaoba-evaluator",
         status: "blocked",
         reason_code: "xiaoba_external_agent_mode_unavailable",
-        detail: "Installed XiaoBa Arena supports skill/role subjects but not the required external-agent target driver.",
+        detail: "Installed XiaobaOS Arena supports Skill/Role subjects but not the required external-agent target driver.",
         command: this.command,
         version: normalizedVersion(version.stdout, version.stderr),
         capabilities,
@@ -95,7 +95,7 @@ export class XiaoBaEvaluatorRuntime implements EvaluatorRuntime {
     return {
       component: "xiaoba-evaluator",
       status: "ready",
-      detail: "XiaoBa Arena exposes external-agent mode and a target-driver manifest contract.",
+      detail: "XiaobaOS Arena exposes external-agent mode and a target-driver manifest contract.",
       command: this.command,
       version: normalizedVersion(version.stdout, version.stderr),
       capabilities,
@@ -107,7 +107,7 @@ export class XiaoBaEvaluatorRuntime implements EvaluatorRuntime {
       status: "blocked",
       reason_code: "xiaoba_external_agent_driver_unimplemented",
       detail:
-        "XiaoBa advertises an external-agent contract, but Barena's target-driver bridge has not been implemented for that protocol yet.",
+        "XiaobaOS advertises an external-agent contract, but Barena's legacy target-driver bridge has not been implemented for that protocol.",
       stages: {
         usercat: "blocked",
         inspectorcat: "blocked",

@@ -19,17 +19,20 @@
     }
   },
   "bin": {
-    "barena": "dist/index.js"
+    "barena": "dist/cli.js"
   },
   "files": [
     "dist",
     "docs",
+    "examples",
+    "calibration",
+    "assets",
     "README.md",
     "package.json"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc",
-    "dev": "tsx src/index.ts",
+    "build": "rm -rf dist && tsc && chmod +x dist/cli.js",
+    "dev": "tsx src/cli.ts",
     "test": "tsx --test test/*.test.ts",
     "check": "npm run build && npm test",
     "pack:dry-run": "npm pack --dry-run",
@@ -52,6 +55,14 @@
   ],
   "author": "Barena contributors",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fightheyyy/barena.git"
+  },
+  "homepage": "https://github.com/fightheyyy/barena#readme",
+  "bugs": {
+    "url": "https://github.com/fightheyyy/barena/issues"
+  },
   "devDependencies": {
     "@types/figlet": "^1.7.0",
     "@types/node": "^20.10.5",

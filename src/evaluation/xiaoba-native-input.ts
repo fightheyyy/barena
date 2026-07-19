@@ -10,13 +10,11 @@ import {
   XiaoBaNativeRuntimeConfig,
 } from "./xiaoba-native-types";
 import { hashDirectory } from "../utils/fs";
+import { loadXiaoBaCasePack } from "./xiaoba-case-pack";
+import { loadXiaoBaNativeCase } from "./xiaoba-native-case";
+export { loadXiaoBaNativeCase } from "./xiaoba-native-case";
 
-const DEFAULT_PASS_ENV = [
-  "XIAOBA_LLM_API_KEY",
-  "XIAOBA_LLM_API_BASE",
-  "XIAOBA_LLM_MODEL",
-  "XIAOBA_LLM_PROVIDER",
-] as const;
+const DEFAULT_PASS_ENV: readonly string[] = [];
 
 export interface XiaoBaNativeInputOptions {
   binaryPath?: string;
@@ -28,14 +26,16 @@ export interface XiaoBaNativeInputOptions {
 export interface CreateXiaoBaSkillRequestOptions extends XiaoBaNativeInputOptions {
   roleId: string;
   skillPath: string;
-  casePaths: string[];
+  casePaths?: string[];
+  casePackPath?: string;
   attemptsPerArm: number;
 }
 
 export interface CreateXiaoBaRoleRequestOptions extends XiaoBaNativeInputOptions {
   baselineRoleId: string;
   candidateRoleId: string;
-  casePaths: string[];
+  casePaths?: string[];
+  casePackPath?: string;
   attemptsPerArm: number;
 }
 
@@ -45,6 +45,7 @@ export function createXiaoBaNativeSkillRequest(
   const resolved = resolveNativeInputs(options);
   const role = loadXiaoBaRoleSource(options.roleId, resolved.rolesRoot);
   const skill = loadSkillSelection(options.skillPath);
+  const caseInput = resolveCaseInput(options.casePaths, options.casePackPath);
   return {
     schema: "barena.xiaoba_capability_evaluation_request.v1",
     evaluation_id: createEvaluationId("skill"),
@@ -53,7 +54,8 @@ export function createXiaoBaNativeSkillRequest(
     evaluator_runtime: "xiaoba-cli",
     capability_kind: "skill",
     xiaoba: resolved.config,
-    cases: options.casePaths.map(loadXiaoBaNativeCase),
+    cases: caseInput.cases,
+    ...(caseInput.casePack && { case_pack: caseInput.casePack }),
     attempts_per_arm: validateAttempts(options.attemptsPerArm),
     baseline: { mode: "role", role },
     candidate: {
@@ -74,6 +76,7 @@ export function createXiaoBaNativeRoleRequest(
   const resolved = resolveNativeInputs(options);
   const baseline = loadXiaoBaRoleSource(options.baselineRoleId, resolved.rolesRoot);
   const candidate = loadXiaoBaRoleSource(options.candidateRoleId, resolved.rolesRoot);
+  const caseInput = resolveCaseInput(options.casePaths, options.casePackPath);
   return {
     schema: "barena.xiaoba_capability_evaluation_request.v1",
     evaluation_id: createEvaluationId("role"),
@@ -82,7 +85,8 @@ export function createXiaoBaNativeRoleRequest(
     evaluator_runtime: "xiaoba-cli",
     capability_kind: "role",
     xiaoba: resolved.config,
-    cases: options.casePaths.map(loadXiaoBaNativeCase),
+    cases: caseInput.cases,
+    ...(caseInput.casePack && { case_pack: caseInput.casePack }),
     attempts_per_arm: validateAttempts(options.attemptsPerArm),
     baseline: { mode: "role", role: baseline },
     candidate: { mode: "role", role: candidate },
@@ -95,7 +99,8 @@ export function createXiaoBaNativeRuntimeConfig(
   const binaryPath = resolveExecutable(options.binaryPath ?? "xiaoba");
   const projectRoot = path.resolve(options.projectRoot ?? inferProjectRoot(binaryPath));
   const rolesRoot = path.resolve(options.rolesRoot ?? process.env.XIAOBA_ROLES_ROOT ?? path.join(projectRoot, "roles"));
-  const passEnv = [...new Set(options.passEnv ?? DEFAULT_PASS_ENV)].map((name) => validateEnvName(name));
+  const passEnv = (options.passEnv ?? DEFAULT_PASS_ENV).map((name) => validateEnvName(name));
+  if (new Set(passEnv).size !== passEnv.length) throw new Error("--pass-env names must be unique");
   return {
     config: {
       binary_path: binaryPath,
@@ -109,45 +114,19 @@ export function createXiaoBaNativeRuntimeConfig(
   };
 }
 
-export function loadXiaoBaNativeCase(casePath: string): XiaoBaNativeCaseV1 {
-  const absolutePath = path.resolve(casePath);
-  const value = JSON.parse(fs.readFileSync(absolutePath, "utf8")) as XiaoBaNativeCaseV1;
-  if (value?.schema !== "barena.xiaoba_native_case.v1") {
-    throw new Error("XiaoBa native case schema must be barena.xiaoba_native_case.v1");
-  }
-  if (!value.case_id || !/^[A-Za-z0-9._-]+$/.test(value.case_id)) {
-    throw new Error("XiaoBa native case_id must contain only letters, numbers, dot, underscore, or dash");
-  }
-  if (!["effectiveness", "regression", "safety"].includes(value.purpose)) {
-    throw new Error("XiaoBa native case purpose must be effectiveness, regression, or safety");
-  }
-  if (!value.task?.prompt?.trim()) throw new Error("XiaoBa native case task.prompt must be non-empty");
-  if (!Array.isArray(value.assertions?.artifacts)) throw new Error("XiaoBa native case assertions.artifacts must be an array");
-  const caseDir = path.dirname(absolutePath);
-  return {
-    ...value,
-    fixtures: value.fixtures?.map((fixture) => ({
-      ...fixture,
-      source_path: path.isAbsolute(fixture.source_path)
-        ? fixture.source_path
-        : path.resolve(caseDir, fixture.source_path),
-    })),
-  };
-}
-
 export function loadXiaoBaRoleSource(roleId: string, rolesRoot: string): XiaoBaNativeRoleSource {
   const normalized = roleId.trim();
-  if (!normalized || !/^[A-Za-z0-9._-]+$/.test(normalized)) {
-    throw new Error("XiaoBa Role ID must contain only letters, numbers, dot, underscore, or dash");
+  if (!normalized || normalized === "." || normalized === ".." || !/^[A-Za-z0-9._-]+$/.test(normalized)) {
+    throw new Error("XiaobaOS Role ID must be a safe path segment and may not be . or ..");
   }
   const sourcePath = path.resolve(rolesRoot, normalized);
   const relative = path.relative(path.resolve(rolesRoot), sourcePath);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("XiaoBa Role must stay inside roles root");
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("XiaobaOS Role must stay inside roles root");
   const manifestPath = path.join(sourcePath, "role.json");
-  if (!fs.existsSync(manifestPath)) throw new Error(`XiaoBa Role not found: ${normalized} (${manifestPath})`);
+  if (!fs.existsSync(manifestPath)) throw new Error(`XiaobaOS Role not found: ${normalized} (${manifestPath})`);
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as { name?: string };
   if (manifest.name !== normalized) {
-    throw new Error(`XiaoBa Role manifest name ${String(manifest.name)} does not match requested ID ${normalized}`);
+    throw new Error(`XiaobaOS Role manifest name ${String(manifest.name)} does not match requested ID ${normalized}`);
   }
   return { role_id: normalized, source_path: sourcePath, fingerprint: hashDirectory(sourcePath) };
 }
@@ -157,6 +136,23 @@ function resolveNativeInputs(options: XiaoBaNativeInputOptions): {
   rolesRoot: string;
 } {
   return createXiaoBaNativeRuntimeConfig(options);
+}
+
+function resolveCaseInput(
+  casePaths: string[] | undefined,
+  casePackPath: string | undefined
+): {
+  cases: XiaoBaNativeCaseV1[];
+  casePack?: ReturnType<typeof loadXiaoBaCasePack>["reference"];
+} {
+  const paths = casePaths ?? [];
+  if (casePackPath && paths.length > 0) throw new Error("Use either casePaths or casePackPath, not both");
+  if (casePackPath) {
+    const pack = loadXiaoBaCasePack(casePackPath);
+    return { cases: pack.cases, casePack: pack.reference };
+  }
+  if (paths.length === 0) throw new Error("At least one XiaobaOS native case or case pack is required");
+  return { cases: paths.map(loadXiaoBaNativeCase) };
 }
 
 function resolveExecutable(command: string): string {

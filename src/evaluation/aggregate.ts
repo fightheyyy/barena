@@ -17,7 +17,10 @@ export function aggregateSkillEvaluation(input: SkillEvaluationAggregateInput): 
     (total, run) => total + run.scorecard.attempts.filter((attempt) => attempt.assertions.length > 0).length,
     0
   );
-  const evidenceComplete = baseline.evidence_complete && candidate.evidence_complete;
+  const admissionComplete = input.admission
+    ? input.admission.decision === "pass" && input.admission.evidence_complete
+    : true;
+  const evidenceComplete = baseline.evidence_complete && candidate.evidence_complete && admissionComplete;
   const armsComplete = isComplete(baseline) && isComplete(candidate);
   const observedLift = armsComplete && baseline.pass_rate.value !== null && candidate.pass_rate.value !== null
     ? candidate.pass_rate.value - baseline.pass_rate.value
@@ -33,13 +36,18 @@ export function aggregateSkillEvaluation(input: SkillEvaluationAggregateInput): 
 
   const decision = decide({ baseline, candidate, evidenceComplete, effectiveness, caseRegression });
   const targetNative = allRuns.some((run) => run.scorecard.evidence_coverage.target_native_trace);
-  const evidenceRefs = [...new Set(allRuns.flatMap((run) => [run.scorecard_ref, ...run.scorecard.evidence_refs]))];
+  const evidenceRefs = [...new Set([
+    ...(input.admission?.evidence_refs ?? []),
+    ...allRuns.flatMap((run) => [run.scorecard_ref, ...run.scorecard.evidence_refs]),
+  ])];
 
   return {
     schema: "barena.skill_evaluation.v1",
     evaluation_id: input.request.evaluation_id,
     created_at: new Date().toISOString(),
     request_ref: input.requestRef,
+    evaluation_mode: "portable_verifier",
+    evidence_profile: "boundary_verified",
     decision: decision.decision,
     reason_code: decision.reason,
     summary: decision.summary,
@@ -62,6 +70,7 @@ export function aggregateSkillEvaluation(input: SkillEvaluationAggregateInput): 
     },
     baseline,
     candidate,
+    ...(input.admission && { admission: input.admission }),
     evidence_refs: evidenceRefs,
     debug_refs: input.debugRefs ?? [],
   };
@@ -93,8 +102,12 @@ function aggregateArm(
   };
   const evidenceComplete = runs.length > 0 && runs.every((run) => {
     const scorecard = run.scorecard;
+    const profileComplete = scorecard.evaluation_mode === "portable_verifier"
+      ? scorecard.evidence_profile === "boundary_verified" && scorecard.evidence_coverage.verifier_evidence
+      : scorecard.evidence_coverage.evaluator_traces;
     return scorecard.evidence_coverage.boundary_trace &&
-      scorecard.evidence_coverage.evaluator_traces &&
+      scorecard.evidence_coverage.workspace_observation &&
+      profileComplete &&
       scorecard.attempts.length === attemptsPerArm &&
       scorecard.attempts.every((attempt) => attempt.assertions.length > 0);
   });
@@ -147,7 +160,7 @@ function decide(input: {
     };
   }
   if (!input.evidenceComplete) {
-    return { decision: "held", reason: "evidence_incomplete", summary: "Required boundary, verifier, or evaluator evidence is incomplete." };
+    return { decision: "held", reason: "evidence_incomplete", summary: "Required boundary, workspace, verifier, or profile evidence is incomplete." };
   }
   if (input.baseline.stability === "flaky" || input.candidate.stability === "flaky" ||
       input.baseline.stability === "incomplete" || input.candidate.stability === "incomplete") {

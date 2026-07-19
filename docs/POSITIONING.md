@@ -1,9 +1,9 @@
 # Barena Positioning Contract
 
-Status: **Locked**  
-Version: **1.1**  
-Locked on: **2026-07-14**  
-Tactical amendment: **2026-07-14 — XiaoBa-first native runtime evidence**  
+Status: **Locked**
+Version: **1.2**
+Locked on: **2026-07-14**
+Tactical amendments: **2026-07-14 — XiaobaOS-first native runtime evidence; 2026-07-19 — portable verifier profile for external CLI agents**
 Review on or after: **2026-10-14**
 
 This is the authoritative product-positioning document for Barena. README, SPEC, PLAN, roadmap, GitHub copy, and implementation priorities must remain consistent with it. If another document conflicts with this file, this file wins.
@@ -76,32 +76,34 @@ Required output:
 - Issues and suspected root causes.
 - A release decision: `cleared`, `held`, or `rejected`.
 
-## Phase 1 Wedge: XiaoBa Role and Skill Release CI
+## Phase 1 Wedge: XiaobaOS Role and Skill Release CI
 
-The product category remains Agent E2E release CI. Phase 1 deliberately starts with the two native XiaoBa capability artifacts that can be exercised through the existing Arena contract:
+The product category remains Agent E2E release CI. Phase 1 deliberately starts with the two native XiaobaOS capability artifacts that can be exercised through the existing Arena contract, then exposes the same deterministic release gate to external CLI agents through a lower-evidence portable verifier profile:
 
-> Validate whether adding or updating a XiaoBa Role or Skill makes the target runtime measurably better and reliably so, without introducing regressions.
+> Validate whether adding or updating an Agent capability makes the target runtime measurably better and reliably so, without introducing regressions.
 
 Phase 1 is fixed as follows:
 
 | Concern | Phase 1 decision |
 |---|---|
-| Change type | XiaoBa Role or Skill introduction/version update |
-| Target runtime | XiaoBa-CLI first native target; OpenClaw first external target |
+| Change type | XiaobaOS Role/Skill introduction or version update; external Agent behavior/configuration changes through portable cases |
+| Target runtime | XiaobaOS first native target; OpenClaw first built-in portable target; Hermes/custom CLI agents through the portable JSON driver |
 | Comparison | Skill: same explicit Role without vs with candidate Skill; Role: explicit baseline Role vs candidate Role |
-| Case source | XiaoBa native Arena suites/cases first; SkillsBench-derived external calibration next |
-| Evaluator runtime | XiaoBa-CLI only |
-| Evaluator roles | UserCat, InspectorCat, ReviewerCat |
-| Evidence | XiaoBa native trace/scorecard plus artifacts, verifier, and replay; Barena boundary trace for external targets |
+| Case source | XiaobaOS native Arena suites/cases first; SkillsBench-derived calibration and portable E2E cases next |
+| Evaluation profile | `xiaobaos_native` for native Arena; `portable_verifier` for external CLI agents |
+| Evaluator stages | XiaobaOS native stages where emitted; `not_applicable` in portable verifier mode |
+| Evidence | XiaobaOS native trace/scorecard plus artifacts, verifier, and replay; Barena boundary/workspace/verifier evidence for portable targets |
 | Decision | `cleared`, `held`, or `rejected` |
 
-The complete Phase 1 evaluation requires all three evaluator Agents to run through XiaoBa-CLI. A deterministic TypeScript fallback is not equivalent and must never be reported as a real three-Agent evaluation. XiaoBa native Arena may orchestrate evaluator and target planes within one CLI execution; Barena must keep their evidence identities logically distinct and must not claim separate OS processes unless observed.
+The highest-evidence native profile runs through XiaobaOS Arena. A deterministic TypeScript fallback is not equivalent and must never be reported as a real three-Agent evaluation. XiaobaOS native Arena may orchestrate evaluator and target planes within one CLI execution; Barena must keep their evidence identities logically distinct and must not claim separate OS processes unless observed.
 
-The current XiaoBa 0.1.1 native Arena implements UserCat planning, Inspector analysis, and Reviewer classification as XiaoBa-owned pipeline stages; only the target execution produces native `AgentSession` traces. Barena may use those stages for native runtime calibration, but every result must record `three_evaluator_agent_sessions=false` and must not describe the current path as three independent evaluator AgentSessions.
+The portable verifier profile is a separate, honest release contract. It may clear deterministic artifact/final-state outcomes when the driver protocol, Barena boundary trace, workspace observation, verifier evidence, and all planned attempts are complete. It must report `evaluation_mode=portable_verifier`, `evidence_profile=boundary_verified`, `target_native_trace=false`, and `isolation=policy_only`; it must not fabricate UserCat, InspectorCat, ReviewerCat, target-native tool, or hidden-reasoning traces. Replay count alone never upgrades boundary-only evidence above medium confidence.
 
-The tactical amendment is evidence-driven and does not change the product category. XiaoBa 0.1.1 already exposes native `base_skill`, `role`, and `role_skill` Arena subjects with clean runtime, evaluator roles, replay, native traces, and scorecards, while the OpenClaw three-evaluator path remains blocked on an external-target seam. Therefore XiaoBa becomes the first native vertical slice and OpenClaw remains the first portability proof through an external `TargetAdapter`.
+The supported XiaobaOS 0.1.1 and 0.2.0 native Arena contracts implement UserCat planning, Inspector analysis, and Reviewer classification as XiaobaOS-owned pipeline stages; only the target execution produces native `AgentSession` traces. Barena may use those stages for native runtime calibration, but every result must record `three_evaluator_agent_sessions=false` and must not describe the current path as three independent evaluator AgentSessions.
 
-XiaoBa currently has no subject-free `base` Arena mode. Barena must therefore require an explicit truthful baseline: a Role-only run for same-Role Skill evaluation, a previous Skill/Role version where available, or an explicit baseline Role for Role evaluation. It must return `held/blocked` when the requested baseline cannot be represented; it must never manufacture a no-op subject.
+The tactical amendments are evidence-driven and do not change the product category. XiaobaOS exposes native `base_skill`, `role`, and `role_skill` Arena subjects with clean runtime, evaluator stages, replay, native traces, and scorecards. OpenClaw already exposes an executable local JSON CLI boundary, while Hermes and other CLI agents can conform through a small JSON driver. Therefore XiaobaOS remains the first and highest-evidence native vertical slice, and the portable verifier becomes the public cross-runtime path without waiting for a XiaobaOS external-evaluator seam.
+
+XiaobaOS currently has no subject-free `base` Arena mode. Barena must therefore require an explicit truthful baseline: a Role-only run for same-Role Skill evaluation, a previous Skill/Role version where available, or an explicit baseline Role for Role evaluation. It must return `held/blocked` when the requested baseline cannot be represented; it must never manufacture a no-op subject.
 
 ## Role of SkillsBench
 
@@ -128,13 +130,13 @@ Public wording should be `Barena evaluated on SkillsBench tasks` or `SkillsBench
 
 ## Runtime and Evidence Boundaries
 
-- **Evaluator runtime:** XiaoBa-CLI runs UserCat, InspectorCat, and ReviewerCat.
-- **First native target runtime:** XiaoBa-CLI native Arena evaluates XiaoBa Roles and Skills through its composite evaluation contract.
-- **First external target runtime:** OpenClaw remains the first `TargetAdapter` portability target; other open-source Agents arrive through the same external boundary.
+- **Native evaluation runtime:** XiaobaOS runs its UserCat, InspectorCat, and ReviewerCat stages and evaluates XiaobaOS Roles and Skills through the composite Arena contract.
+- **Portable evaluation runtime:** Barena runs the target driver, records boundary/workspace observations, executes deterministic verifiers, aggregates replay, and applies the release gate; evaluator stages are not applicable.
+- **First external target runtime:** OpenClaw is the first built-in portable adapter; Hermes and other open-source CLI Agents arrive through the portable JSON driver boundary.
 - **Barena:** owns orchestration, case identity, boundary observations, replay, verification, evidence coverage, and release artifacts.
-- **Target-native trace:** first-class when XiaoBa Arena actually emits it; optional for external targets and never inferred or fabricated.
+- **Target-native trace:** first-class when XiaobaOS Arena actually emits it; optional for external targets and never inferred or fabricated.
 
-Missing evaluator support, target binaries, credentials, configuration, or evidence must produce `blocked`/`held`, not simulated success.
+Missing native evaluator support, portable driver support, target binaries, credentials, configuration, or required evidence must produce `blocked`/`held`, not simulated success.
 
 ## Release Semantics
 
@@ -155,7 +157,7 @@ Barena is not:
 - a generic benchmark platform;
 - a Skill marketplace;
 - a new Agent runtime;
-- a replacement for XiaoBa-CLI;
+- a replacement for XiaobaOS;
 - primarily a malware scanner or security certification product;
 - primarily a one-off audit-report publisher;
 - a GUI automation framework;
@@ -185,12 +187,12 @@ GitHub stars, report views, and benchmark run counts are secondary signals; they
 
 Near-term sequence:
 
-1. Publish a transparent XiaoBa Role/Skill calibration using the implemented native paired evaluation path.
-2. Add the XiaoBa external-target driver seam for three real evaluator AgentSessions.
-3. Import a small deterministic SkillsBench calibration set and run OpenClaw Skill comparisons.
-4. Put the same release decision into GitHub CI.
-5. Expand to prompts, models, tools, memory, and runtime changes.
-6. Add other open-source target runtimes only after the first loop is credible.
+1. Publish a transparent XiaobaOS Role/Skill calibration using the implemented native paired evaluation path.
+2. Ship the portable verifier and JSON driver contract with installable OpenClaw and Hermes/custom examples.
+3. Run a small deterministic SkillsBench-derived OpenClaw Skill comparison through the portable path.
+4. Add the optional XiaobaOS external-target evaluator seam when it can produce stronger evidence than the portable profile.
+5. Put the same release decision into GitHub CI.
+6. Expand to prompts, models, tools, memory, and runtime changes.
 
 Feature filter:
 
@@ -204,7 +206,7 @@ Use:
 
 - `End-to-end testing and release CI for open-source AI agents.`
 - `Prove every Agent change works reliably before you ship it.`
-- `Starting with XiaoBa Roles and Skills: validate effectiveness, stability, and regressions in the native runtime.`
+- `Native XiaobaOS evaluation plus a portable deterministic verifier for OpenClaw, Hermes, and other CLI agents.`
 
 Avoid positioning Barena as:
 
@@ -222,8 +224,8 @@ Before the review date, this contract may change only when concrete evidence inv
 
 - repeated maintainer interviews showing the release decision is not valuable;
 - SkillsBench calibration showing the evaluation cannot be made reliable;
-- implementation evidence showing the XiaoBa evaluator contract is infeasible;
-- implementation evidence showing a native XiaoBa Role/Skill loop is executable before the external-target seam;
+- implementation evidence showing the XiaobaOS evaluator contract is infeasible;
+- implementation evidence showing a native XiaobaOS Role/Skill loop is executable before the external-target seam;
 - actual user adoption converging on a materially different job.
 
 Any positioning change must update this file first, explain the evidence, and then synchronize README, SPEC, PLAN, and GitHub metadata.

@@ -82,14 +82,14 @@ barena run <subject-id> --subjects-root "$tmp/subjects" --runs-root "$tmp/runs" 
 If `barena` is not installed as a command, use the local build from this repository:
 
 ```bash
-npm --prefix /Users/guowei/Barena run build
-node /Users/guowei/Barena/dist/index.js doctor
+npm run build
+node dist/cli.js doctor
 ```
 
 Then replace `barena` in the commands above with:
 
 ```bash
-node /Users/guowei/Barena/dist/index.js
+node dist/cli.js
 ```
 
 ## Decision Policy
@@ -167,7 +167,7 @@ description: Use Barena to clear agent capabilities before trust or promotion. T
 
 The body should instruct the agent to:
 
-- Locate `barena` or `/Users/guowei/Barena/dist/index.js`.
+- Locate `barena` or the repository-local `dist/cli.js`.
 - Build Barena when using the local repository.
 - Use temporary subject/run roots for exploratory clearance.
 - Import, scan, run, and report.
@@ -182,21 +182,21 @@ The Barena clearance skill should not:
 - Execute arbitrary GitHub install scripts.
 - Treat pattern-based static scan as complete malware detection.
 - Hide `held` or `rejected` decisions behind friendly language.
-- Copy XiaoBa product surfaces, logs, secrets, Feishu, Weixin, Dashboard, Electron, or Pet code into Barena.
-- Claim that MVP1 invokes real XiaoBa `AgentSession`; current scorecards still record `xiaoba_invoked: false`.
+- Copy XiaobaOS product surfaces, logs, secrets, Feishu, Weixin, Dashboard, Electron, or Pet code into Barena.
+- Confuse the legacy deterministic `barena run` adapter (`xiaoba_invoked: false`) with XiaobaOS native Arena evaluation or portable external-agent verification.
 
 ## Open Questions
 
-- Should the skill live in `~/.codex/skills/barena-clearance`, XiaoBa's skill directory, or both?
+- Should the skill live in `~/.codex/skills/barena-clearance`, XiaobaOS's skill directory, or both?
 - Should Barena expose a single `clear` command that wraps `import`, `scan`, `run`, and `report` for skill users?
 - Should scorecard rendering be tolerant of older run schemas before the skill is dogfooded on existing runs?
-- What verifier shape should be standard for real XiaoBa skill admission?
-- How should `role + skill` subjects be represented once Barena supports them directly?
+- Which native and portable evidence profiles should the installable skill expose by default?
+- Which additional portable driver examples are worth maintaining after OpenClaw and the Hermes-compatible sample?
 
 ## Rollout Plan
 
 1. Create the installable `barena-clearance` skill from this document.
-2. Dogfood it on one real XiaoBa skill and one intentionally unsafe fixture.
+2. Dogfood it on one real XiaobaOS Skill and one intentionally unsafe fixture.
 3. Add a compact command wrapper only if repeated use shows command friction.
 4. Add backward-compatible report rendering for older scorecards before relying on historical runs.
-5. Revisit the skill after the real XiaoBa `AgentSession` bridge lands.
+5. Revisit the skill after real OpenClaw and Hermes wrapper smokes are available.

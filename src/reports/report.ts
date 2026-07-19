@@ -1,7 +1,20 @@
-import path from "node:path";
-import { Scorecard } from "../domain/types";
-import { readJson, writeJson } from "../utils/fs";
 import fs from "node:fs";
+import path from "node:path";
+import type { Scorecard } from "../domain/types";
+import {
+  renderAgentE2EReport,
+  renderEvaluationReport,
+  renderXiaoBaCapabilityReport,
+} from "./run-renderers";
+import { loadRunRecord, type CatalogRun } from "../runs/catalog";
+import {
+  isCompleteAgentE2ERun,
+  isCompleteLegacyClearanceRun,
+  isCompleteSkillEvaluationRun,
+  isCompleteXiaoBaCapabilityRun,
+  stringValue,
+} from "../runs/type-guards";
+import { writeJson } from "../utils/fs";
 
 export function writeReports(scorecard: Scorecard, runRoot: string): { json: string; markdown: string } {
   const reportsRoot = path.join(runRoot, "reports");
@@ -15,7 +28,27 @@ export function writeReports(scorecard: Scorecard, runRoot: string): { json: str
 }
 
 export function loadScorecard(runId: string, runsRoot = "runs"): Scorecard {
-  return readJson<Scorecard>(path.resolve(runsRoot, runId, "reviewer", "scorecard.json"));
+  const run = loadRunRecord(runId, runsRoot);
+  if (run.kind !== "legacy_clearance" || !isCompleteLegacyClearanceRun(run.result)) {
+    throw new Error(`Run ${runId} is not a complete legacy clearance scorecard`);
+  }
+  return run.result;
+}
+
+export function renderRunMarkdown(run: CatalogRun): string {
+  if (run.kind === "legacy_clearance" && isCompleteLegacyClearanceRun(run.result)) {
+    return renderMarkdown(run.result);
+  }
+  if (run.kind === "agent_e2e" && isCompleteAgentE2ERun(run.result)) {
+    return renderAgentE2EReport(run.result);
+  }
+  if (run.kind === "skill_evaluation" && isCompleteSkillEvaluationRun(run.result)) {
+    return renderEvaluationReport(run.result);
+  }
+  if (run.kind === "xiaoba_capability" && isCompleteXiaoBaCapabilityRun(run.result)) {
+    return renderXiaoBaCapabilityReport(run.result);
+  }
+  return renderPartialRunMarkdown(run);
 }
 
 export function renderMarkdown(scorecard: Scorecard): string {
@@ -75,4 +108,30 @@ ${agentTarget}
 
 ${issues}
 `;
+}
+
+function renderPartialRunMarkdown(run: CatalogRun): string {
+  const summary = stringValue(run.result.summary) ?? "No summary was recorded.";
+  const warnings = run.warnings.length
+    ? run.warnings.map((warning) => `- ${warning}`).join("\n")
+    : "- None";
+  return [
+    `# Barena Run: ${run.run_id}`,
+    "",
+    `- Kind: ${run.kind}`,
+    `- Schema: ${run.schema}`,
+    `- Decision: ${run.decision}`,
+    `- Status: ${run.status}`,
+    `- Reason: ${run.reason}`,
+    `- Catalog health: ${run.health}`,
+    "",
+    "## Summary",
+    "",
+    summary,
+    "",
+    "## Catalog warnings",
+    "",
+    warnings,
+    "",
+  ].join("\n");
 }

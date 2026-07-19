@@ -60,7 +60,7 @@ export const AGENT_TARGETS: AgentTargetProfile[] = [
   },
   {
     target_id: "xiaoba",
-    display_name: "XiaoBa",
+    display_name: "XiaobaOS",
     category: "dogfood_runtime",
     role: "Dogfood runtime for governable self-evolution and skill/role growth review.",
     source_uri: "barena://dogfood/xiaoba",

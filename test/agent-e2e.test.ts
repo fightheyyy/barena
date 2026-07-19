@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { runAgentE2ECase } from "../src/e2e/case-runner";
+import { loadAgentE2ECase, runAgentE2ECase } from "../src/e2e/case-runner";
 import { runTargetObservationAttempts } from "../src/e2e/target-observation";
 import {
   AgentE2ECaseV1,
@@ -88,7 +88,24 @@ test("XiaoBa evaluator preflight rejects the current skill-role-only Arena contr
   assert.equal(probe.capabilities.includes("external_agent_mode"), false);
 });
 
-test("Agent E2E run fails closed before target execution when XiaoBa cannot drive external agents", async () => {
+test("external Agent cases reject empty and vacuous verifier assertions", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "barena-agent-case-validation-"));
+  const casePath = path.join(root, "case.json");
+  for (const artifacts of [
+    [],
+    [{ path: "result.txt", contains: "" }],
+    [{ path: "result.txt" }, { path: "result.txt" }],
+    [{ path: "result.txt", exists: false, contains: "contradiction" }],
+  ]) {
+    writeJson(casePath, {
+      ...makeCase("validate assertions", 0),
+      assertions: { artifacts },
+    });
+    assert.throws(() => loadAgentE2ECase(casePath));
+  }
+});
+
+test("Agent E2E run fails closed when an explicitly injected external evaluator is unavailable", async () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "barena-e2e-fail-closed-"));
   const scorecard = await runAgentE2ECase(makeCase("should not run", 0), temp, {
     runsRoot: path.join(temp, "runs"),
@@ -108,27 +125,30 @@ test("Agent E2E run fails closed before target execution when XiaoBa cannot driv
   assert.equal(fs.existsSync(path.join(runRoot, "workspace", "fake-openclaw-invocation.json")), false);
 });
 
-test("Agent E2E orchestration contract carries target replay, verification, and evidence coverage", async () => {
+test("Agent E2E portable verifier clears OpenClaw from boundary, workspace, verifier, and replay evidence", async () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "barena-e2e-contract-"));
   const scorecard = await runAgentE2ECase(makeCase("write the asserted artifact", 1), temp, {
     runsRoot: path.join(temp, "runs"),
-    evaluator: new TestXiaoBaEvaluator(),
     targetAdapter: fakeOpenClawAdapter(),
   });
 
   assert.equal(scorecard.status, "pass");
   assert.equal(scorecard.decision, "cleared");
-  assert.equal(scorecard.attempts.length, 2);
-  assert.equal(scorecard.attempts.every((attempt) => attempt.status === "pass"), true);
+  assert.equal(scorecard.evaluation_mode, "portable_verifier");
+  assert.equal(scorecard.evidence_profile, "boundary_verified");
+  assert.equal(scorecard.evaluator.runtime, "barena-portable");
   assert.deepEqual(scorecard.evaluator.stages, {
-    usercat: "completed",
-    inspectorcat: "completed",
-    reviewercat: "completed",
+    usercat: "not_applicable",
+    inspectorcat: "not_applicable",
+    reviewercat: "not_applicable",
   });
+  assert.equal(scorecard.attempts.length, 2);
   assert.equal(scorecard.evidence_coverage.boundary_trace, true);
-  assert.equal(scorecard.evidence_coverage.evaluator_traces, true);
+  assert.equal(scorecard.evidence_coverage.verifier_evidence, true);
+  assert.equal(scorecard.evidence_coverage.workspace_observation, true);
+  assert.equal(scorecard.evidence_coverage.evaluator_traces, false);
   assert.equal(scorecard.evidence_coverage.target_native_trace, false);
-  assert.equal(scorecard.confidence, "high");
+  assert.equal(scorecard.confidence, "medium");
 });
 
 function fakeOpenClawAdapter(): OpenClawTargetAdapter {

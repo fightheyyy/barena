@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// Future-contract simulator only. Stock XiaobaOS 0.2.0 does not expose this
+// additive live contract and must remain fail-closed in Barena.
+
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -8,23 +11,32 @@ const argv = process.argv.slice(2);
 
 try {
   if (argv.length === 1 && argv[0] === "--version") {
-    process.stdout.write("0.1.1\n");
+    process.stdout.write("0.2.0\n");
   } else if (matches(argv, ["arena", "import", "skill"]) && argv.includes("--help")) {
     process.stdout.write("Usage: xiaoba arena import skill <path>\n");
   } else if (matches(argv, ["arena", "snapshot", "role"]) && argv.includes("--help")) {
     process.stdout.write("Usage: xiaoba arena snapshot role <role-id>\n");
   } else if (matches(argv, ["arena", "runtime", "prepare"]) && argv.includes("--help")) {
     process.stdout.write("Usage: xiaoba arena runtime prepare --mode base_skill|role_skill|role\n");
+  } else if (matches(argv, ["arena", "live-contract"]) && argv.includes("--help")) {
+    process.stdout.write("Usage: xiaoba arena live-contract --json\n");
+  } else if (matches(argv, ["arena", "runtime", "contract"]) && argv.includes("--help")) {
+    process.stdout.write("Usage: xiaoba arena runtime contract --json\n");
   } else if (matches(argv, ["arena", "run", "execute"]) && argv.includes("--help")) {
     printExecuteHelp();
   } else if (argv.length === 2 && matches(argv, ["arena"]) && argv.includes("--help")) {
     process.stdout.write("Arena commands: skill import snapshot run runtime\n");
+  } else if (matches(argv, ["arena", "live-contract"])) {
+    printJson(futureLiveRuntimeContract());
+  } else if (matches(argv, ["arena", "runtime", "contract"])) {
+    printJson(futureLiveRuntimeContract());
   } else if (matches(argv, ["arena", "import", "skill"])) {
     printJson(importSkill(requiredPositional(argv, 3, "skill path")));
   } else if (matches(argv, ["arena", "snapshot", "role"])) {
     printJson(snapshotRole(requiredPositional(argv, 3, "role id")));
   } else if (matches(argv, ["arena", "run", "execute"])) {
     printJson(executeArenaRun(parseFlags(argv.slice(3))));
+    if (String(process.env.FAKE_XIAOBA_BEHAVIOR || "").trim().toLowerCase() === "post_call_failure") process.exit(70);
   } else {
     fail(`Unsupported fake XiaoBa command: ${argv.join(" ")}`, 64);
   }
@@ -53,6 +65,30 @@ Options:
   --max-replay-cases <n>         max Inspector cases selected for replay
   --timeout-ms <n>               sandbox command timeout
 `);
+}
+
+function futureLiveRuntimeContract() {
+  return {
+    schema: "barena.xiaoba_live_runtime_contract.v1",
+    xiaoba_version: "0.2.0",
+    composite_call_contract: "barena.xiaoba_composite_calls.v1",
+    provider_call_record_schema: "barena.provider_call.v1",
+    bounds: {
+      target_calls_per_turn: 1,
+      usercat_calls_per_turn: 1,
+      inspector_calls_per_attempt: 0,
+      reviewer_calls_per_attempt: 0,
+      replay_calls_per_case_turn: 1,
+    },
+    enforcement: {
+      input_token_limit: true,
+      output_token_limit: true,
+      sdk_max_retries: 0,
+      authoritative_per_call_telemetry: true,
+      complete_provider_identity: true,
+      complete_cost_basis: true,
+    },
+  };
 }
 
 function importSkill(skillValue) {
@@ -181,7 +217,9 @@ function executeArenaRun(flags) {
   if (mode === "role" && subject.subject?.type !== "role") throw new Error("role review mode requires subject.type=role");
 
   const prompt = [stringFlag(flags, "scenario") ?? "Fake XiaoBa native Arena task", ...arrayFlag(flags, "message")].join("\n");
-  const behavior = requestedBehavior(prompt);
+  const requested = requestedBehavior(prompt);
+  const callContext = providerCallContext(flags, runId, mode);
+  const behavior = scopedBehavior(requested, callContext);
   const runRoot = path.join(projectRoot, "arena", "runs", runId);
   if (behavior === "collision") fail(`Arena run collision: ${runId}`, 73);
   fs.rmSync(runRoot, { recursive: true, force: true });
@@ -195,6 +233,11 @@ function executeArenaRun(flags) {
     tmp_root: path.join(runRoot, "tmp"),
   };
   for (const directory of [...Object.values(roots), path.join(runRoot, "debug")]) ensureDir(directory);
+  if (behavior === "symlink_escape") {
+    const escapedLogs = path.join(projectRoot, "..", `escaped-native-evidence-${safeSegment(runId)}`);
+    ensureDir(escapedLogs);
+    fs.symlinkSync(escapedLogs, path.join(roots.workspace_root, "logs"), "dir");
+  }
   writeJson(path.join(roots.home_root, "skill-registry.json"), []);
   writeJson(path.join(roots.workspace_root, "skill-registry.json"), []);
 
@@ -306,11 +349,49 @@ function executeArenaRun(flags) {
   const shouldCreateArtifact = shouldCreateResult({ prompt, mode, targetRole: activeRole, behavior });
   const artifactPath = path.join(roots.workspace_root, "result.txt");
   if (shouldCreateArtifact) {
-    fs.writeFileSync(artifactPath, `BARENA_XIAOBA_OK\nmode=${mode}\nrole=${activeRole}\nskill=${stagedSkill ? subjectName : "none"}\n`, "utf8");
+    const artifact = `BARENA_XIAOBA_OK\nmode=${mode}\nrole=${activeRole}\nskill=${stagedSkill ? subjectName : "none"}\n`;
+    if (behavior === "artifact_symlink_escape") {
+      const escapedArtifact = path.join(projectRoot, "..", `escaped-artifact-${safeSegment(runId)}.txt`);
+      fs.writeFileSync(escapedArtifact, artifact, "utf8");
+      fs.symlinkSync(escapedArtifact, artifactPath);
+    } else {
+      fs.writeFileSync(artifactPath, artifact, "utf8");
+    }
+  }
+  if (isDialogueGraphTask(prompt) && mode === "role_skill" && !["blocked", "unsafe"].includes(behavior)) {
+    writeDialogueGraphArtifacts(roots.workspace_root);
   }
 
   const nativeTracePath = path.join(roots.workspace_root, "logs", "sessions", `fake-${safeSegment(runId)}`, "traces.jsonl");
   const nativeTraceRef = relativeRef(projectRoot, nativeTracePath);
+  const debugRoot = path.join(runRoot, "debug");
+  const usercatPackagePath = path.join(debugRoot, "usercat-1-package.json");
+  const usercatControllerPath = path.join(debugRoot, "usercat-controller.jsonl");
+  const inspectorAnalysisPath = path.join(debugRoot, "inspector-analysis.json");
+  const inspectorCasesPath = path.join(debugRoot, "inspector-cases.json");
+  const reviewerScorecardPath = path.join(debugRoot, "reviewer-scorecard.json");
+  const reviewerReportPath = path.join(debugRoot, "reviewer-report.md");
+  const providerCallRecordsPath = path.join(debugRoot, "provider-calls.ndjson");
+  const providerCallRecordsRef = relativeRef(projectRoot, providerCallRecordsPath);
+  const providerCallRecords = buildProviderCallRecords({
+    behavior,
+    callContext,
+    provider: process.env.XIAOBA_LLM_PROVIDER || "fake-provider",
+    model: process.env.XIAOBA_LLM_MODEL || "fake-model",
+    outputLimit: positiveEnvironmentInteger("XIAOBA_LLM_MAX_TOKENS", 100),
+    inputPrice: nonNegativeEnvironmentNumber("XIAOBA_LLM_INPUT_USD_PER_MILLION_TOKENS", 1),
+    outputPrice: nonNegativeEnvironmentNumber("XIAOBA_LLM_OUTPUT_USD_PER_MILLION_TOKENS", 2),
+    evidenceRefs: {
+      target: nativeTraceRef,
+      usercat: relativeRef(projectRoot, usercatPackagePath),
+      inspector: relativeRef(projectRoot, inspectorAnalysisPath),
+      reviewer: relativeRef(projectRoot, reviewerScorecardPath),
+      replay: relativeRef(projectRoot, reviewerScorecardPath),
+    },
+  });
+  ensureDir(path.dirname(providerCallRecordsPath));
+  fs.writeFileSync(providerCallRecordsPath, `${providerCallRecords.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
+
   if (behavior !== "missing_trace") {
     ensureDir(path.dirname(nativeTracePath));
     if (behavior === "invalid_trace") {
@@ -340,6 +421,11 @@ function executeArenaRun(flags) {
             artifact_manifest: [{ path: artifactPath, type: "text", action: "created" }],
           }] : [],
         },
+        ...providerIdentityFields(
+          behavior,
+          process.env.XIAOBA_LLM_PROVIDER || "fake-provider",
+          process.env.XIAOBA_LLM_MODEL || "fake-model"
+        ),
         tokens: { prompt: 1, completion: 1 },
         tool_visibility: [{
           roleName: activeRole,
@@ -355,13 +441,6 @@ function executeArenaRun(flags) {
     }
   }
 
-  const debugRoot = path.join(runRoot, "debug");
-  const usercatPackagePath = path.join(debugRoot, "usercat-1-package.json");
-  const usercatControllerPath = path.join(debugRoot, "usercat-controller.jsonl");
-  const inspectorAnalysisPath = path.join(debugRoot, "inspector-analysis.json");
-  const inspectorCasesPath = path.join(debugRoot, "inspector-cases.json");
-  const reviewerScorecardPath = path.join(debugRoot, "reviewer-scorecard.json");
-  const reviewerReportPath = path.join(debugRoot, "reviewer-report.md");
   writeJson(usercatPackagePath, { version: 1, run_id: `${contractRunId}-usercat-1`, status: behavior === "blocked" ? "blocked" : "pass", trace_path: nativeTraceRef });
   fs.writeFileSync(usercatControllerPath, `${JSON.stringify({ type: "usercat_controller", run_id: contractRunId, trace_ref: nativeTraceRef })}\n`, "utf8");
   writeJson(inspectorAnalysisPath, { version: 1, run_id: contractRunId, trace_refs: [nativeTraceRef], status: behavior === "blocked" ? "blocked" : "pass" });
@@ -428,6 +507,7 @@ function executeArenaRun(flags) {
       inspector_cases: relativeRef(projectRoot, inspectorCasesPath),
       reviewer_scorecard: relativeRef(projectRoot, reviewerScorecardPath),
       reviewer_report: relativeRef(projectRoot, reviewerReportPath),
+      provider_calls: providerCallRecordsRef,
       replay_result_refs: [],
     },
     sandbox: { ...sandbox, enforced: sandboxEnforced },
@@ -475,13 +555,75 @@ function shouldCreateResult({ prompt, mode, targetRole, behavior }) {
   return true;
 }
 
+function isDialogueGraphTask(prompt) {
+  return prompt.includes("Implement a dialogue parser") && prompt.includes("dialogue.json");
+}
+
+function writeDialogueGraphArtifacts(workspaceRoot) {
+  const scriptPath = path.join(workspaceRoot, "script.txt");
+  const text = fs.readFileSync(scriptPath, "utf8");
+  const headers = [...text.matchAll(/^\[([^\]]+)\]\s*$/gm)];
+  const nodes = [];
+  const edges = [];
+  for (let index = 0; index < headers.length; index += 1) {
+    const header = headers[index];
+    const id = header[1].trim();
+    const bodyStart = (header.index ?? 0) + header[0].length;
+    const bodyEnd = headers[index + 1]?.index ?? text.length;
+    const lines = text.slice(bodyStart, bodyEnd).split("\n").map((line) => line.trim()).filter(Boolean);
+    const choiceLines = lines.filter((line) => /^\d+\.\s+/.test(line));
+    if (choiceLines.length) {
+      nodes.push({ id, text: "", speaker: "", type: "choice" });
+      for (const line of choiceLines) {
+        const match = line.match(/^\d+\.\s+(.*?)\s+->\s+([A-Za-z0-9._-]+)$/);
+        if (!match) throw new Error(`Cannot parse fake dialogue choice: ${line}`);
+        edges.push({ from: id, to: match[2], text: match[1] });
+      }
+      continue;
+    }
+    const match = lines[0]?.match(/^([^:]+):\s+(.*?)\s+->\s+([A-Za-z0-9._-]+)$/);
+    if (!match) throw new Error(`Cannot parse fake dialogue line in ${id}`);
+    nodes.push({ id, text: match[2], speaker: match[1], type: "line" });
+    edges.push({ from: id, to: match[3], text: "" });
+  }
+  fs.writeFileSync(path.join(workspaceRoot, "solution.py"), "def parse_script(text: str):\n    return {'nodes': [], 'edges': []}\n", "utf8");
+  writeJson(path.join(workspaceRoot, "dialogue.json"), { nodes, edges });
+}
+
 function requestedBehavior(prompt) {
   const explicit = String(process.env.FAKE_XIAOBA_BEHAVIOR || "").trim().toLowerCase();
   const supported = new Set(["invalid_trace", "missing_trace", "unsafe", "blocked", "unstable", "sandbox_not_enforced", "stale", "collision"]);
+  for (const behavior of [
+    "missing_identity",
+    "mismatched_identity",
+    "retries",
+    "missing_evaluator_telemetry",
+    "duplicate_calls",
+    "per_call_token_overrun",
+    "reservation_overrun",
+    "post_call_failure",
+    "selected_unsafe",
+    "selected_blocked",
+  ]) supported.add(behavior);
+  const aliases = new Map([
+    ["missing_provider_identity", "missing_identity"],
+    ["mismatched_provider_identity", "mismatched_identity"],
+    ["provider_identity_mismatch", "mismatched_identity"],
+  ]);
+  if (aliases.has(explicit)) return aliases.get(explicit);
   if (supported.has(explicit)) return explicit;
   const markers = [
     ["FAKE_INVALID_TRACE", "invalid_trace"],
     ["FAKE_MISSING_TRACE", "missing_trace"],
+    ["FAKE_MISSING_IDENTITY", "missing_identity"],
+    ["FAKE_MISMATCHED_IDENTITY", "mismatched_identity"],
+    ["FAKE_RETRIES", "retries"],
+    ["FAKE_MISSING_EVALUATOR_TELEMETRY", "missing_evaluator_telemetry"],
+    ["FAKE_DUPLICATE_CALLS", "duplicate_calls"],
+    ["FAKE_PER_CALL_TOKEN_OVERRUN", "per_call_token_overrun"],
+    ["FAKE_RESERVATION_OVERRUN", "reservation_overrun"],
+    ["FAKE_SELECTED_UNSAFE", "selected_unsafe"],
+    ["FAKE_SELECTED_BLOCKED", "selected_blocked"],
     ["FAKE_UNSAFE", "unsafe"],
     ["FAKE_BLOCKED", "blocked"],
     ["FAKE_UNSTABLE", "unstable"],
@@ -490,6 +632,128 @@ function requestedBehavior(prompt) {
     ["FAKE_RUN_COLLISION", "collision"],
   ];
   return markers.find(([marker]) => prompt.includes(marker))?.[1] ?? "pass";
+}
+
+function scopedBehavior(behavior, callContext) {
+  const outcome = behavior === "selected_unsafe"
+    ? "unsafe"
+    : behavior === "selected_blocked"
+      ? "blocked"
+      : behavior;
+  if (!["unsafe", "blocked"].includes(outcome)) return behavior;
+
+  const selectedMode = behavior.startsWith("selected_");
+  const prefix = outcome === "unsafe" ? "FAKE_XIAOBA_UNSAFE" : "FAKE_XIAOBA_BLOCKED";
+  const selectedArmValue = String(
+    process.env[`${prefix}_ARM`] || process.env.FAKE_XIAOBA_SELECTED_ARM || (selectedMode ? "candidate" : "")
+  ).trim().toLowerCase();
+  const selectedAttemptValue = String(
+    process.env[`${prefix}_ATTEMPT`] || process.env.FAKE_XIAOBA_SELECTED_ATTEMPT || (selectedMode ? "1" : "")
+  ).trim();
+  const selectedArm = ["baseline", "candidate"].includes(selectedArmValue) ? selectedArmValue : undefined;
+  const selectedAttempt = /^[1-9]\d*$/.test(selectedAttemptValue) ? Number(selectedAttemptValue) : undefined;
+  if (selectedArm && callContext.arm !== selectedArm) return "pass";
+  if (selectedAttempt && callContext.attempt !== selectedAttempt) return "pass";
+  return outcome;
+}
+
+function providerCallContext(flags, runId, mode) {
+  const inferred = runId.match(/(?:^|.*-)(baseline|candidate)-(.+)-([1-9]\d*)-[^-]+$/);
+  const explicitArm = stringFlag(flags, "barena-arm") || stringFlag(flags, "arm");
+  const arm = ["baseline", "candidate"].includes(String(explicitArm))
+    ? String(explicitArm)
+    : inferred?.[1] || (mode === "role_skill" ? "candidate" : "baseline");
+  const caseId = stringFlag(flags, "barena-case-id") || stringFlag(flags, "case-id") || inferred?.[2] || "fixture-case";
+  const explicitAttempt = Number(stringFlag(flags, "barena-attempt") || stringFlag(flags, "attempt"));
+  const attempt = Number.isInteger(explicitAttempt) && explicitAttempt > 0
+    ? explicitAttempt
+    : Number(inferred?.[3] || 1);
+  return { runId, arm, caseId, attempt };
+}
+
+function buildProviderCallRecords({
+  behavior,
+  callContext,
+  provider,
+  model,
+  outputLimit,
+  inputPrice,
+  outputPrice,
+  evidenceRefs,
+}) {
+  const components = behavior === "missing_evaluator_telemetry"
+    ? ["target"]
+    : ["target", "usercat", "replay"];
+  const records = components.map((component, index) => {
+    const inputTokens = index + 1;
+    const outputTokens = behavior === "per_call_token_overrun" && component === "target"
+      ? outputLimit + 1
+      : 1;
+    return {
+      schema: "barena.provider_call.v1",
+      call_id: `${callContext.runId}.provider-call.${String(index + 1).padStart(2, "0")}.${component}`,
+      arm: callContext.arm,
+      case_id: callContext.caseId,
+      attempt: callContext.attempt,
+      component,
+      ...providerIdentityFields(behavior, provider, model),
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      requested_output_limit: outputLimit,
+      configured_max_retries: behavior === "retries" ? 1 : 0,
+      observed_retries: behavior === "retries" ? 1 : 0,
+      estimated_cost_usd: roundNumber((inputTokens * inputPrice + outputTokens * outputPrice) / 1_000_000),
+      billed_cost_usd: null,
+      evidence_ref: evidenceRefs[component],
+    };
+  });
+  if (behavior === "duplicate_calls" && records.length > 0) {
+    records.push({ ...records[0] });
+  }
+  if (behavior === "reservation_overrun") {
+    const inputTokens = 1;
+    const outputTokens = 1;
+    records.push({
+      schema: "barena.provider_call.v1",
+      call_id: `${callContext.runId}.provider-call.04.target-reservation-overrun`,
+      arm: callContext.arm,
+      case_id: callContext.caseId,
+      attempt: callContext.attempt,
+      component: "target",
+      ...providerIdentityFields(behavior, provider, model),
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      requested_output_limit: outputLimit,
+      configured_max_retries: 0,
+      observed_retries: 0,
+      estimated_cost_usd: roundNumber((inputTokens * inputPrice + outputTokens * outputPrice) / 1_000_000),
+      billed_cost_usd: null,
+      evidence_ref: evidenceRefs.target,
+    });
+  }
+  return records;
+}
+
+function providerIdentityFields(behavior, provider, model) {
+  if (behavior === "missing_identity") return {};
+  if (behavior === "mismatched_identity") {
+    return { provider: `${provider}-mismatch`, model: `${model}-mismatch` };
+  }
+  return { provider, model };
+}
+
+function positiveEnvironmentInteger(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function nonNegativeEnvironmentNumber(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function roundNumber(value) {
+  return Number(value.toFixed(12));
 }
 
 function requireProjectRoot() {

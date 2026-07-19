@@ -43,7 +43,8 @@ export class OpenClawTargetAdapter implements TargetAdapter {
   private readonly killGraceMs: number;
 
   constructor(config: OpenClawTargetAdapterConfig = {}) {
-    this.command = config.command ?? "openclaw";
+    const command = config.command ?? "openclaw";
+    this.command = command.includes(path.sep) ? path.resolve(command) : command;
     this.baseArgs = config.baseArgs ?? [];
     this.envAllowlist = config.envAllowlist ?? [];
     this.probeTimeoutMs = config.probeTimeoutMs ?? 5_000;

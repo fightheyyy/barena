@@ -8,16 +8,16 @@
 
 [![Barena](https://img.shields.io/badge/Barena-v0.1.0-6B7280.svg?labelColor=111827)](https://github.com/fightheyyy/barena)
 [![Agent E2E](https://img.shields.io/badge/AI_Agent-E2E_Testing-D4A72C.svg?labelColor=111827)](#how-it-works)
-[![XiaoBa Native](https://img.shields.io/badge/XiaoBa_native-supported-22C55E.svg?labelColor=111827)](#quick-start)
-[![Coming Soon](https://img.shields.io/badge/cross_runtime-coming_soon-F59E0B.svg?labelColor=111827)](#coming-soon-cross-runtime-agent-e2e)
+[![XiaobaOS Native](https://img.shields.io/badge/XiaobaOS_native-supported-22C55E.svg?labelColor=111827)](#quick-start)
+[![Portable E2E](https://img.shields.io/badge/portable_E2E-OpenClaw_%7C_Hermes-22C55E.svg?labelColor=111827)](#runtime-support)
 [![Node](https://img.shields.io/badge/Node.js-18+-6B7280.svg?labelColor=339933)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-CLI-6B7280.svg?labelColor=3178C6)](https://www.typescriptlang.org/)
-[![Runtime](https://img.shields.io/badge/runtime-XiaoBa_CLI_0.1.1-6B7280.svg?labelColor=7C3AED)](#current-runtime-boundary)
+[![Runtime](https://img.shields.io/badge/runtime-XiaobaOS_0.1.1_%7C_0.2.0-6B7280.svg?labelColor=7C3AED)](#current-runtime-boundary)
 [![License](https://img.shields.io/badge/License-Apache--2.0-6B7280.svg?labelColor=16A34A)](#license)
 
 **When code becomes a black box, behavior becomes the contract. Barena tests the contract.**
 
-[Positioning](docs/POSITIONING.md) · [Why Agent E2E](#why-agent-e2e-testing) · [How It Works](#how-it-works) · [Coming Soon](#coming-soon-cross-runtime-agent-e2e) · [Quick Start](#quick-start) · [Boundaries](#boundaries)
+[Positioning](docs/POSITIONING.md) · [Why Agent E2E](#why-agent-e2e-testing) · [How It Works](#how-it-works) · [Runtime Support](#runtime-support) · [Quick Start](#quick-start) · [Boundaries](#boundaries)
 
 </div>
 
@@ -27,9 +27,9 @@
 
 Barena is an open-source end-to-end testing and release CI project for AI agents. It treats the agent system — model, prompt, skills, tools, memory, and runtime — as a black box, then evaluates observable behavior with clean runs, traces, artifacts, replay evidence, verifiers, and release decisions.
 
-The authoritative product scope is locked in [`docs/POSITIONING.md`](docs/POSITIONING.md): Barena evaluates whether a concrete Agent change is effective, stable, regression-free, and ready to ship. Phase 1 is XiaoBa Role and Skill Release CI.
+The authoritative product scope is locked in [`docs/POSITIONING.md`](docs/POSITIONING.md): Barena evaluates whether a concrete Agent change is effective, stable, regression-free, and ready to ship. Phase 1 combines native XiaobaOS Role/Skill release CI with a portable deterministic verifier for external CLI agents.
 
-The current release deeply adapts XiaoBa-CLI 0.1.1 as the first native target runtime. It evaluates a Skill as the same immutable Role without versus with the candidate Skill, or evaluates an explicit baseline Role versus a candidate Role. Every attempt uses a fresh XiaoBa Arena root and preserves native session traces, Arena stage evidence, artifacts, verifier results, fingerprints, and a release decision. OpenClaw remains the secondary cross-runtime path.
+The current release supports exact XiaobaOS 0.1.1 and 0.2.0 native Arena contracts. It also runs OpenClaw through a built-in subprocess adapter and Hermes/custom CLI agents through `barena.portable_target_*.v1`. Portable runs preserve honest boundary/workspace/verifier evidence and never fabricate native traces or evaluator sessions.
 
 ---
 
@@ -70,21 +70,21 @@ flowchart LR
         Preflight --> CandidateRuns
     end
 
-    subgraph Native["3) XiaoBa Arena per Attempt"]
+    subgraph Runtime["3) Runtime Profile"]
         direction TB
-        UserRun["UserCat → target AgentSession"]
-        TraceReview["E2E Trace → InspectorCat<br/>→ ReviewerCat native score"]
+        Native["XiaobaOS native Arena<br/>native trace + stages"]
+        Portable["OpenClaw / JSON driver<br/>boundary observation"]
         Artifacts["artifacts + final state"]
-        UserRun --> TraceReview
-        UserRun --> Artifacts
+        Native --> Artifacts
+        Portable --> Artifacts
     end
 
     subgraph Evidence["4) Barena Evidence"]
         direction TB
-        NativeEvidence["native trace + stage evidence"]
+        RuntimeEvidence["native or boundary evidence<br/>profile stays explicit"]
         Verifier["artifact verifier"]
         Package["validated + hash-stamped<br/>evidence package"]
-        NativeEvidence --> Package
+        RuntimeEvidence --> Package
         Verifier --> Package
     end
 
@@ -98,35 +98,36 @@ flowchart LR
     Cases --> Preflight
     Baseline --> BaseRuns
     Candidate --> CandidateRuns
-    BaseRuns --> UserRun
-    CandidateRuns --> UserRun
-    TraceReview --> NativeEvidence
+    BaseRuns --> Native
+    CandidateRuns --> Native
+    BaseRuns --> Portable
+    CandidateRuns --> Portable
+    Native --> RuntimeEvidence
+    Portable --> RuntimeEvidence
     Artifacts --> Verifier
     Package --> Aggregate
 ```
 
-The Trace is the behavioral evidence spine. Within each attempt, UserCat creates real user pressure, the target produces a Trace and artifacts, InspectorCat extracts problems, and ReviewerCat produces the native case score. Barena separately verifies artifacts and final state, validates and hash-stamps the complete evidence package, then aggregates every baseline/candidate attempt into truth, observed lift, stability, regressions, and the final release decision.
+The native path uses XiaobaOS trace and Arena-stage evidence. The portable path uses only Barena-observed input, process output, runtime status, workspace changes, and deterministic verifier results. Both paths aggregate baseline/candidate attempts into truth, observed lift, stability, regressions, and the final release decision.
 
-These Cats are logical evaluator stages. XiaoBa 0.1.1 currently runs them as a composite native Arena pipeline—not three independent evaluator `AgentSession`s—and Barena records that limitation explicitly.
+XiaobaOS 0.1.1 and 0.2.0 run UserCat, InspectorCat, and ReviewerCat as a composite native Arena pipeline—not three independent evaluator `AgentSession`s. Portable runs mark those stages `not_applicable`, emit no evaluator traces, and cap boundary-only confidence at `medium`.
 
 Barena is a release gate, not a benchmark leaderboard. The goal is not one impressive score; it is repeatable proof that an agent capability can cross a trust boundary without breaking expected behavior.
 
 ---
 
-## Coming Soon: Cross-Runtime Agent E2E
+## Runtime Support
 
-XiaoBa-native Role and Skill evaluation is implemented. The next step is applying the same evidence standard to other open-source runtimes.
+Barena ships two explicit evidence profiles:
 
-- Run real multi-turn tasks against target agents through independent adapters, starting with OpenClaw.
-- Define reusable E2E cases with task prompts, fixtures, permissions, and assertions.
-- Verify final state across files, Git repositories, browser sessions, artifacts, and allowed side effects.
-- Replay cases to detect flaky agent behavior.
-- Compare releases to surface capability regressions after model, prompt, skill, or tool changes.
-- Gate agent releases in CI with evidence-backed pass, hold, or reject decisions.
+- `xiaobaos_native`: XiaobaOS Role/Skill paired evaluation with native Arena evidence.
+- `portable_verifier`: OpenClaw built-in adapter or Hermes/custom JSON driver, with boundary/workspace/verifier evidence.
 
-The Barena-side OpenClaw subprocess boundary is implemented, but XiaoBa 0.1.1 has no external-agent target-driver seam. That route therefore fails closed with `xiaoba_external_agent_mode_unavailable`; Barena never substitutes deterministic TypeScript Cats for the missing evaluator path.
+Portable clearance is real but lower-evidence than XiaobaOS native clearance. Reports explicitly record `evaluation_mode=portable_verifier`, `evidence_profile=boundary_verified`, `target_native_trace=false`, and `isolation=policy_only`. Driver completion never bypasses Barena's deterministic verifier.
 
-XiaoBa 0.1.1's UserCat, Inspector, and Reviewer are native Arena pipeline stages, not three independent evaluator AgentSessions. Native results record this explicitly instead of overstating the architecture.
+OpenClaw has a built-in adapter. Hermes is driver-compatible in this release; the bundled driver is an offline conformance example, not a claim of native/live Hermes validation.
+
+Stock XiaobaOS 0.2.0 is compatible with Barena's native probe and artifact contracts, but it does not yet expose the `arena live-contract --json` capability or authoritative physical provider-call telemetry required for paid/live evaluation. Barena fails closed with `live_runtime_contract_unsupported` before either arm starts. The repository's fake live target exercises a future additive contract; it is not evidence that stock XiaobaOS is live-ready.
 
 ---
 
@@ -137,13 +138,13 @@ XiaoBa 0.1.1's UserCat, Inspector, and Reviewer are native Arena pipeline stages
 | Local `SKILL.md` directory | Supported | Import, scan, run, replay, report |
 | GitHub skill repository | Supported | Clone-and-scan only; no install scripts |
 | Built-in agent target profile | Supported | `opencode`, `xiaoba`, `hermes`, `openclaw` |
-| XiaoBa Skill effectiveness | Supported | Same immutable Role: `role` baseline vs `role_skill` candidate |
-| XiaoBa Role effectiveness | Supported | Explicit baseline Role vs candidate Role under pinned cases |
-| XiaoBa native trace package | Supported | Session-log-v3 traces, Arena stages, artifacts, verifier, hashes |
-| OpenClaw target adapter | Secondary | Local JSON CLI, strict stdout protocol, boundary evidence |
-| Reusable native E2E case | Supported | Task, fixtures, assertions, replay controls, timeout |
-| Three independent evaluator AgentSessions | Not claimed | XiaoBa 0.1.1 stages are a composite Arena pipeline |
-| Cross-runtime XiaoBa evaluation | Coming soon | Requires an external-agent target-driver seam |
+| XiaobaOS Skill effectiveness | Native contract | Same immutable Role: `role` baseline vs `role_skill` candidate; stock 0.2.0 live runs are held before paid execution |
+| XiaobaOS Role effectiveness | Native contract | Explicit baseline Role vs candidate Role under pinned cases; stock 0.2.0 live runs are held before paid execution |
+| XiaobaOS native trace package | Supported | Session-log-v3 traces, Arena stages, artifacts, verifier, hashes |
+| OpenClaw portable adapter | Supported | Local JSON CLI, Skill eligibility, boundary/workspace/verifier evidence |
+| Hermes/custom portable driver | Supported contract | Strict JSON driver; native/live Hermes validation is not claimed |
+| Reusable portable E2E case | Supported | Task, fixtures, assertions, replay controls, timeout |
+| Three independent evaluator AgentSessions | Not claimed | XiaobaOS stages are composite; portable stages are not applicable |
 | Cross-version regression report | Coming soon | Compare pass, fail, and flaky behavior between releases |
 
 ---
@@ -163,107 +164,133 @@ Barena MVP1 is a TypeScript CLI/TUI for verifier-backed release evaluation of op
 | Output | JSON scorecards and Markdown reports |
 | Decisions | `cleared`, `held`, `rejected` |
 | Statuses | `pass`, `unstable`, `reopened`, `blocked`, `unsafe` |
-| XiaoBa Skill release | Same-Role baseline/candidate pairing with native activation proof |
-| XiaoBa Role release | Explicit Role baseline/candidate pairing |
-| UI | Keyboard-driven runtime/capability setup, result, boundary/native trace views |
+| XiaobaOS Skill release | Same-Role baseline/candidate pairing with native activation proof |
+| XiaobaOS Role release | Explicit Role baseline/candidate pairing |
+| UI | Guided import/setup CLI plus a keyboard TUI for local evaluation, results, and traces |
 
 ---
 
 ## Quick Start
 
-Install and build:
+Once Barena is installed or linked, start with the guided workflow:
 
 ```bash
-npm install
-npm run check
+barena guide
 ```
 
-Use the local CLI:
+Running `barena` with no arguments in an interactive terminal opens the same guide. It asks for the Skill source, target Agent, E2E case, and attempts per arm; then it explains the baseline/candidate comparison, evidence profile, snapshot destination, and exact automation command before changing anything. Preparing the evaluation and starting model or paid execution require separate confirmations.
+
+If the Skill and E2E case already exist locally, open the keyboard workspace instead:
 
 ```bash
-BAR="node dist/index.js"
+barena tui
 ```
 
-Clear a local skill:
+The TUI walks through XiaobaOS Skill/Role, OpenClaw Skill, and Hermes/custom portable-driver evaluation. It shows the current workflow step, examples for every required input, total target sessions, evidence limits, and a separate `y` confirmation before model-backed execution. Validation failures return to the relevant step with previous inputs preserved. Use `barena guide` when you still need to import/snapshot a Skill or create a starter case.
+
+The guide accepts three Skill sources:
+
+- A local directory containing `SKILL.md`.
+- A GitHub repository as `owner/repo` or a URL. Barena clones and snapshots it; it does not run install scripts or arbitrary repository code.
+- A SkillHub or other catalog Skill that you have already downloaded. Select the downloaded-directory option and point Barena at the local folder. This release does not claim direct SkillHub API integration.
+
+The snapshot directory must not contain, or be contained by, the source Skill directory. If you are evaluating the current working directory, choose an external snapshot root, for example `barena guide --subjects-root ../barena-subjects`.
+
+Choose the Agent according to the evidence you need:
+
+| Agent path | Current support | Evidence boundary |
+|---|---|---|
+| XiaobaOS 0.1.1 / 0.2.0 | Native Arena integration | Highest-evidence path: native trace and Arena stages plus Barena verifier |
+| OpenClaw | Built-in portable adapter | Boundary/workspace/verifier evidence; no native trace; confidence capped at medium |
+| Hermes or another CLI Agent | Portable JSON driver contract | Driver-compatible only; native/live Hermes validation is not claimed |
+
+For a real release decision, use an existing case with task-specific fixtures and deterministic assertions. The guide can create a minimal starter case to teach the schema and complete the first run, but that template is only onboarding scaffolding. It is not evidence that the case covers realistic behavior, regressions, adversarial inputs, or production quality.
+
+For CLI development from this source checkout:
 
 ```bash
-$BAR import skill test/fixtures/skills/good-skill --id good-skill
-$BAR scan good-skill
-$BAR run good-skill --replays 3 --verifier test/fixtures/verifiers/pass.js
-$BAR scorecard <run-id>
-$BAR report <run-id> --format markdown
+npm ci
+npm run build
+npm link
+barena guide
 ```
 
-Probe the installed XiaoBa native contract:
+Evaluate an OpenClaw Skill as a no-Skill baseline versus the candidate Skill:
 
 ```bash
-$BAR e2e probe --target xiaoba
+barena evaluate skill ./my-skill \
+  --target openclaw \
+  --case ./my-openclaw-case.json \
+  --attempts 3
 ```
 
-Open the interactive release flow:
+Evaluate the same pair through a Hermes-compatible portable driver:
 
 ```bash
-$BAR
+barena evaluate skill ./my-skill \
+  --target hermes \
+  --target-command ./my-hermes-driver \
+  --case ./my-portable-case.json \
+  --attempts 3
 ```
 
-Choose **How Barena works (core DAG)** for the terminal-native reader map. To run an evaluation, choose XiaoBa Skill or XiaoBa Role, provide the explicit baseline, select a native E2E case, and set attempts per arm. The result separates verifier-backed truth, observed lift, replay stability, evidence quality, and the release decision. Press `t` to inspect both Barena boundary events and XiaoBa native trace events.
+The portable case must use `target.adapter=portable` and a `target.runtime` matching `--target` (`hermes` above). To integrate a real Hermes or custom CLI Agent, copy `examples/portable-driver.mjs`, preserve the probe/request/result schemas, and replace the deterministic artifact write with the real target invocation. Driver completion never bypasses Barena's verifier.
 
-Run the same evaluation non-interactively for CI:
+Run XiaobaOS native Skill evaluation for CI:
 
 ```bash
-$BAR evaluate skill test/fixtures/xiaoba-native/skills/candidate-skill \
-  --target xiaoba \
+barena evaluate skill ./my-skill \
+  --target xiaobaos \
   --role engineer-cat \
-  --case docs/cases/xiaoba-skill-artifact.json \
-  --attempts 2
+  --case ./xiaoba-native-case.json \
+  --attempts 3 \
+  --live-policy ./live-policy.json
 ```
 
-Evaluate a candidate Role:
+This command starts model execution only when the installed XiaobaOS runtime proves Barena's live safety contract. Stock XiaobaOS 0.2.0 currently returns a held result before paid execution; use the portable offline example below to verify the installable Barena path without credentials.
+
+`xiaobaos` is the recommended public target name; `xiaoba` remains a compatibility alias, and the executable remains `xiaoba`. The bundled SkillsBench-derived calibration pack can use the same native path with `--case-pack calibration/skillsbench/dialogue-graph-mini/case-pack.json`. It is a **SkillsBench-derived Barena calibration**, not an official SkillsBench or BenchFlow result.
+
+To verify the installable portable protocol without model credentials, build a tarball and run the bundled offline driver in a clean consumer directory:
 
 ```bash
-$BAR evaluate role reviewer-cat \
-  --baseline-role engineer-cat \
-  --case docs/cases/xiaoba-role-artifact.json \
-  --attempts 2
+# In the Barena release checkout
+npm pack
+
+# In a clean consumer directory
+mkdir barena-smoke && cd barena-smoke
+npm init -y
+npm install /absolute/path/to/barena-0.1.0.tgz
+
+npx barena e2e probe \
+  --target hermes \
+  --target-command ./node_modules/barena/examples/portable-driver.mjs
+
+npx barena e2e run \
+  ./node_modules/barena/examples/portable-case.json \
+  --target-command ./node_modules/barena/examples/portable-driver.mjs
 ```
 
-Role IDs resolve from XiaoBa's installed Role root. Missing credentials, incompatible versions, unsupported Skill inheritance, name collisions, missing activation, missing traces, or unenforced sandbox evidence produce `held`/blocked results—not simulated success.
+After `barena@0.1.0` is published, the install line becomes `npm install barena`. The bundled driver is deterministic and offline. A successful run returns exit `0`, `decision=cleared`, `evaluation_mode=portable_verifier`, and `evidence_profile=boundary_verified`. It proves the installable protocol and evidence path; it is not a live Hermes benchmark.
 
-`barena tui --snapshot` keeps the legacy read-only dashboard snapshot available for scripts and documentation.
-
-Import a GitHub skill repository for clone-and-scan review:
-
-```bash
-$BAR import github owner/repo --id candidate-skill --ref main
-```
-
-GitHub import clones and scans only. It does not run install scripts or arbitrary repository code.
-
-The secondary OpenClaw path remains available:
-
-```bash
-$BAR e2e probe --target openclaw
-$BAR e2e run docs/cases/openclaw-write-artifact.json
-```
-
-Without OpenClaw or a XiaoBa external-agent seam, these commands intentionally return a structured held/blocked scorecard.
+Missing binaries, incompatible protocols, credentials, activation evidence, traces, verifier evidence, or sandbox evidence produce `held`/blocked—not simulated success. Unsafe target outcomes produce `rejected` and exit `2`.
 
 ---
 
 ## Built-In Agent Targets
 
 ```bash
-$BAR list targets
-$BAR import agent opencode --id opencode-ci
-$BAR run opencode-ci --replays 1
+barena list targets
+barena import agent opencode --id opencode-ci
+barena run opencode-ci --replays 1
 ```
 
 | Target | Focus |
 |---|---|
 | `opencode` | Coding agent and code-task CI |
-| `xiaoba` | Dogfood runtime for governable skill and role growth |
-| `hermes` | Growth and self-improving agent CI |
-| `openclaw` | Local assistant permissions, channels, and side effects |
+| `xiaoba` / public alias `xiaobaos` | Native Role/Skill Arena evaluation |
+| `hermes` | Portable JSON driver contract; native/live validation not claimed |
+| `openclaw` | Built-in portable local JSON adapter |
 
 ---
 
@@ -271,16 +298,18 @@ $BAR run opencode-ci --replays 1
 
 ```text
 barena
-barena evaluate skill <path> --target xiaoba --role <role-id> --case <native-case.json> [--attempts 2]
-barena evaluate role <candidate-role-id> --baseline-role <role-id> --case <native-case.json> [--attempts 2]
+barena guide
+barena evaluate skill <path> --target xiaobaos --role <role-id> (--case <native-case.json> | --case-pack <pack.json>) --live-policy <policy.json> [--attempts 2] [--preflight-only]
+barena evaluate role <candidate-role-id> --baseline-role <role-id> (--case <native-case.json> | --case-pack <pack.json>) --live-policy <policy.json> [--attempts 2] [--preflight-only]
 barena evaluate skill <path> --target openclaw --case <agent-case.json> [--attempts 2]
+barena evaluate skill <path> --target hermes --target-command ./driver --case <portable-case.json> [--attempts 2]
 barena import skill <path>
 barena import github <owner/repo|url>
 barena import agent <opencode|xiaoba|hermes|openclaw>
 barena scan <subject-id>
 barena run <subject-id> [--replays 3] [--verifier path]
-barena e2e probe [--target xiaoba|openclaw]
-barena e2e run <case.json> [--runs-root runs]
+barena e2e probe [--target xiaobaos|openclaw|hermes] [--target-command ./driver]
+barena e2e run <case.json> [--target-command ./driver] [--runs-root runs]
 barena scorecard <run-id>
 barena report <run-id> [--format markdown|json]
 barena list subjects
@@ -294,7 +323,7 @@ barena doctor
 
 ## Run Package
 
-XiaoBa native capability evaluation:
+XiaobaOS native capability evaluation:
 
 ```text
 runs/<xiaoba-skill-or-role-eval-id>/
@@ -316,7 +345,7 @@ runs/<xiaoba-skill-or-role-eval-id>/
   reports/report.md
 ```
 
-Every accepted evidence copy is hash-stamped. Each Barena attempt owns a distinct XiaoBa run ID and workspace; XiaoBa's internal replay is additional evidence, not a replacement for independent attempts.
+Every accepted evidence copy is hash-stamped. Each Barena attempt owns a distinct XiaobaOS run ID and workspace; XiaobaOS internal replay is additional evidence, not a replacement for independent attempts.
 
 Secondary OpenClaw Skill evaluation:
 
@@ -381,15 +410,16 @@ skill / role / tool / prompt / runtime change
 
 ## Current Runtime Boundary
 
-The first-party path invokes XiaoBa-CLI 0.1.1 directly:
+The highest-evidence path invokes exact XiaobaOS 0.1.1 or 0.2.0 native Arena contracts through the installed `xiaoba` executable:
 
 ```text
-target runtime: xiaoba-cli native Arena
+evaluation mode: xiaobaos_native
+target runtime: XiaobaOS native Arena
 Skill pair: same Role fingerprint, role vs role_skill
 Role pair: explicit baseline Role vs candidate Role
 evidence: native AgentSession trace + Arena stages + Barena verifier
 sandbox: enforced workspace-write proof required
-evaluator stages: composite XiaoBa stages, not three independent AgentSessions
+evaluator stages: composite XiaobaOS stages, not three independent AgentSessions
 network disabled: declared policy, not claimed as a hard network boundary
 ```
 
@@ -401,18 +431,21 @@ adapter: xiaoba-compatible
 xiaoba_invoked: false
 ```
 
-That legacy path does **not** invoke XiaoBa-CLI or `AgentSession`.
+That legacy path does **not** invoke XiaobaOS or `AgentSession`.
 
-The external OpenClaw mode is stricter but still secondary:
+External CLI agents use the portable verifier profile:
 
 ```text
-evaluator runtime: xiaoba-cli (required)
-target adapter: openclaw local JSON CLI
-evidence: Barena boundary trace + optional target-native trace
+evaluation_mode: portable_verifier
+evidence_profile: boundary_verified
+evaluator stages: not_applicable
+target_native_trace: false
 isolation: policy_only
+confidence: at most medium
+decision: cleared | held | rejected from Barena verifier evidence
 ```
 
-If XiaoBa cannot evaluate the external target, the run is held/blocked. The external-agent seam is **coming soon**.
+The portable profile does not claim XiaobaOS evaluator clearance, native Hermes/OpenClaw traces, hard process/network isolation, or hidden reasoning visibility. A future external-evaluator seam may add stronger evidence without changing the portable contract.
 
 ---
 
@@ -427,7 +460,7 @@ Barena is not:
 
 Barena adds the end-to-end behavioral tests that agent releases increasingly depend on.
 
-This repository deliberately does not copy XiaoBa product surfaces such as Dashboard, Electron, Pet, Feishu, Weixin, output logs, or secrets. XiaoBa-native normalization lives under `src/evaluation`; external evaluator and target integrations live under `src/evaluators` and `src/targets`.
+This repository deliberately does not copy XiaobaOS product surfaces such as Dashboard, Electron, Pet, Feishu, Weixin, output logs, or secrets. XiaobaOS-native normalization lives under `src/evaluation`; portable evaluator and target integrations live under `src/evaluators` and `src/targets`.
 
 ## License
 
