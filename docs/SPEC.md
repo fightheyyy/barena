@@ -14,6 +14,7 @@ The product direction is to treat the complete target agent — model, prompt, s
 In scope for this repository:
 
 - A TypeScript CLI named `barena`.
+- Project-scoped target/provider-reference configuration created by `barena init`; raw API credentials remain owned by the target Agent environment and are never persisted by Barena.
 - Subject import for local skills and GitHub skill repositories.
 - Built-in agent target profiles for `opencode`, `xiaoba`, `hermes`, and `openclaw`.
 - Static safety scan before runtime execution.
@@ -30,6 +31,7 @@ In scope for this repository:
 - A reusable E2E case contract, replay attempts, artifact verification, and evidence-aware scorecards.
 - Paired baseline/candidate evaluation for Role and Skill effectiveness, stability, and regression detection.
 - A guided CLI that begins with Skill source, target Agent, and evaluation task, then explains the truthful baseline, effective case configuration, evidence profile, replay/cost policy, and persisted result before execution; the existing TUI remains an explicit advanced evidence workspace.
+- A pinned SkillsBench starter-suite alias that resolves to the bundled derived calibration and can be materialized for XiaobaOS native, OpenClaw, or portable JSON-driver execution.
 - Honest `blocked` results when a native contract, portable driver, target binary/configuration, or required evidence is unavailable.
 - Replay attempts and optional verifier execution.
 - JSON and Markdown reports.
@@ -185,14 +187,17 @@ flowchart LR
     subgraph Input["1) Role / Skill Release Input"]
         direction TB
         Guide["barena guide<br/>Skill source + Agent + task"]
+        Init["barena init<br/>target + provider env refs"]
         TUI["barena tui<br/>advanced evidence workspace"]
         CLI["automation CLI<br/>same evaluation request"]
         Change["baseline + candidate<br/>Role or Skill change"]
         NativeCases["XiaobaOS native cases"]
         PortableCases["portable E2E cases"]
         Derived["SkillsBench-derived case pack<br/>source revision + task hash<br/>explicit adaptation"]
+        ProjectConfig[".barena/config.json<br/>target + defaults<br/>no secret values"]
         NormalizeCase["case-pack loader<br/>compatibility + prompt fidelity"]
         Guide --> Change
+        Init --> ProjectConfig --> Change
         TUI --> Change
         CLI --> Change
         Derived --> NormalizeCase --> NativeCases
@@ -459,12 +464,15 @@ Scorecards contain:
 
 ## CLI Surface
 
-The recommended first command is `barena guide`. It asks for the Skill source, target Agent, and task/case, imports or snapshots the candidate, previews the exact automation command and evidence boundary, and executes only after explicit confirmation.
+The recommended reusable-project setup is `barena init`, followed by `barena doctor` and `barena eval skill <path>`. Initialization stores target settings, evaluation defaults, and provider environment-variable names in `.barena/config.json`; it never stores provider credential or API-base values. `barena guide` remains the interactive source-import and task/case flow: it imports or snapshots the candidate, previews the exact automation command and evidence boundary, and executes only after explicit confirmation.
 
 MVP1 commands:
 
 - `barena import skill <path>`
 - `barena import github <owner/repo|url>`
+- `barena init --target <xiaobaos|openclaw|custom-id> [--target-command <driver>] [--provider <id> --model <id> --api-key-env <ENV>]`
+- `barena config show`
+- `barena config path`
 - `barena guide`
 - `barena import agent <opencode|xiaoba|hermes|openclaw>`
 - `barena scan <subject-id>`
@@ -475,15 +483,17 @@ MVP1 commands:
 - `barena list runs`
 - `barena list targets`
 - `barena tui [--snapshot] [--color|--no-color]`
-- `barena doctor`
+- `barena doctor [--target <id>]`
+- `barena list suites`
 
 Agent E2E Phase 1 adds:
 
 - `barena e2e run <case.json> [--runs-root runs]`
 - `barena e2e probe [--target xiaoba|openclaw]`
+- `barena eval skill <skill-path> [--suite skillsbench:starter]`
 - `barena evaluate skill <skill-path> --target openclaw --case <case.json> [--attempts n]`
-- `barena evaluate skill <skill-path> --target xiaoba --role <role-id> --case <case-or-suite> [--attempts n]`
-- `barena evaluate role <candidate-role-id> --target xiaoba --baseline-role <role-id> --case <case-or-suite> [--attempts n]`
+- `barena evaluate skill <skill-path> --target xiaobaos --role <role-id> --case <case-or-suite> [--attempts n]`
+- `barena evaluate role <candidate-role-id> --target xiaobaos --baseline-role <role-id> --case <case-or-suite> [--attempts n]`
 - `barena` on an interactive TTY opens the guided Skill evaluation workflow; `barena guide` opens the same workflow explicitly. A non-TTY zero-argument invocation remains help-only and script-safe, while `barena guide` without a TTY fails with exit `3` instead of hanging.
 
 The explicit `barena tui` surface is the keyboard evaluation workspace for users who already have local inputs. Its masthead keeps only `BARENA` as ASCII art and renders the surrounding copy as ordinary terminal text. It uses gold plus the terminal's default foreground color, with no background fill, raster sampling, image rendering, or terminal image protocols. It exposes intent-led XiaobaOS Skill/Role, OpenClaw Skill, and Hermes/custom portable-driver workflows; a contextual five-step indicator; input examples; session/evidence review; a distinct paid-execution confirmation; recoverable validation errors; the canonical core evaluation DAG; previous-result, prerequisite, compact result, and provenance-aware trace views. Import, GitHub/catalog intake, and starter-case generation remain in `barena guide`.

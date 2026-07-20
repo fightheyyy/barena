@@ -1,6 +1,6 @@
-import fs from "node:fs";
 import path from "node:path";
 import { AgentE2ECaseV1, ArtifactAssertionResult } from "./types";
+import { verifyArtifactContent } from "../verifier/artifact-verifier";
 
 export function verifyArtifactAssertions(
   caseDefinition: AgentE2ECaseV1,
@@ -9,23 +9,7 @@ export function verifyArtifactAssertions(
   return caseDefinition.assertions.artifacts.map((assertion) => {
     const relativePath = safeRelativePath(assertion.path, "artifact assertion path");
     const artifactPath = path.join(workspace, relativePath);
-    const expectedToExist = assertion.exists ?? true;
-    const exists = fs.existsSync(artifactPath) && fs.statSync(artifactPath).isFile();
-
-    if (exists !== expectedToExist) {
-      return {
-        path: relativePath,
-        status: "fail",
-        detail: expectedToExist ? "Expected artifact does not exist." : "Artifact exists but was expected to be absent.",
-      };
-    }
-    if (!exists || assertion.contains === undefined) {
-      return { path: relativePath, status: "pass", detail: "Artifact existence matched the assertion." };
-    }
-    const contents = fs.readFileSync(artifactPath, "utf8");
-    return contents.includes(assertion.contains)
-      ? { path: relativePath, status: "pass", detail: "Artifact contains the expected text." }
-      : { path: relativePath, status: "fail", detail: "Artifact does not contain the expected text." };
+    return verifyArtifactContent(assertion, artifactPath, relativePath);
   });
 }
 
@@ -39,4 +23,3 @@ export function safeRelativePath(value: string, label: string): string {
   }
   return normalized;
 }
-

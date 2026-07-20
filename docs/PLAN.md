@@ -14,6 +14,8 @@ The native and portable paths remain distinct. XiaobaOS native evaluation does n
 
 First-run onboarding now uses `barena` / `barena guide`. It imports or snapshots a Skill, selects XiaobaOS/OpenClaw/portable execution, validates an existing case or creates a clearly labeled starter smoke case, displays the effective agent/env/network/timeout/replay or live-policy budget, previews the exact automation command before writes, and requires separate preparation and paid-execution confirmations. `barena tui` remains the advanced evidence workspace.
 
+The completed onboarding P0 adds project-scoped `barena init`, target-aware provider/driver diagnostics, and a `skillsbench:starter` alias. Target Agents continue to own their provider authentication; Barena stores only environment-variable references and keeps deterministic verification as the default portable evaluator.
+
 ## Milestones
 
 - [x] Define repository architecture and SuperDev docs.
@@ -51,6 +53,9 @@ First-run onboarding now uses `barena` / `barena guide`. It imports or snapshots
 - [x] Bind isolated OpenClaw baseline/candidate workspaces with explicit Skill allowlists and eligibility preflight.
 - [x] Preserve the capability evaluation TUI under explicit `barena tui` and make zero-argument interactive `barena` open the first-run guide while preserving non-TTY help behavior.
 - [x] Add result, blocked-state, and persisted boundary-trace views to the TUI.
+- [x] Add project config initialization and config-backed evaluation defaults.
+- [x] Add target/provider-aware doctor diagnostics without retaining secret values.
+- [x] Add a cross-profile SkillsBench starter-suite selector and structured portable verification.
 - [x] Add the automation-equivalent `barena evaluate skill` command.
 - [x] Amend the locked positioning contract with evidence for XiaobaOS as the first native target and OpenClaw as the first external target.
 - [x] Define the native/portable dual-path target architecture with logically separate XiaobaOS native and external target planes.
@@ -178,6 +183,9 @@ First-run onboarding now uses `barena` / `barena guide`. It imports or snapshots
 - 2026-07-20: Corrected the future live-contract simulator so deterministic Inspector and internal Reviewer/replay stages no longer fabricate provider calls. Stock XiaobaOS 0.2.0 still fails closed before paid execution because `arena live-contract --json` is unavailable; the real native structural probe remains ready.
 - 2026-07-20: Final local release-candidate gates passed on both declared compatibility edges: Node 18.20.8 completed 166/166 tests and Node 25.9.0 `npm run check` completed 166/166. The release fixed Node 18 immutable-snapshot cleanup by restoring owner permissions only on real directories inside Barena-owned scratch, skipping symlinks, and retaining fail-closed deletion verification; readonly-tree and external-symlink regression tests cover the boundary. The physical-call smoke also passed 10/10 additional serial repetitions.
 - 2026-07-20: The final 245-file package passed prepack, installed into an empty consumer, and completed version/help, portable probe, and two-attempt offline E2E with `cleared/pass`, `boundary_verified`, and medium confidence. Real guide/TUI TTY cancellation, non-TTY exit codes, global-link version, `npm audit --omit=dev`, credential/absolute-path scans, `git diff --check`, and package-content checks also passed.
+- 2026-07-20: Added strict project-scoped `.barena/config.json`, `barena init`, `barena config show/path`, config-backed `barena eval`, and target-aware `barena doctor`. Provider credentials remain target-owned: Barena persists and reports environment-variable names only, passes only allowlisted names, and never serializes their values.
+- 2026-07-20: Added `barena list suites` and `skillsbench:starter`, materializing the pinned one-task SkillsBench-derived calibration for XiaobaOS native, OpenClaw, and portable JSON drivers. Portable cases now reuse trusted structured JSON/graph verification; the suite remains explicitly unofficial and is not presented as a full SkillsBench score.
+- 2026-07-20: Node 25.9.0 `npm run check` and a direct Node 18.20.8 build/test both passed 169/169 tests. A freshly packed `barena@0.1.0` tarball installed in an empty consumer, loaded the bundled suite, initialized and diagnosed a Hermes-compatible driver from project config, and completed the packaged two-attempt offline E2E with `cleared/pass`.
 
 ## Risks / Open Questions
 

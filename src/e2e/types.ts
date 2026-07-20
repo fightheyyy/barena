@@ -1,3 +1,5 @@
+import type { StructuredArtifactAssertion } from "../verifier/artifact-verifier";
+
 export type AgentE2ERunStatus = "completed" | "failed" | "blocked" | "unsafe";
 
 export type AgentE2EReasonCode =
@@ -57,11 +59,7 @@ export interface AgentE2ECaseV1 {
     destination: string;
   }>;
   assertions: {
-    artifacts: Array<{
-      path: string;
-      exists?: boolean;
-      contains?: string;
-    }>;
+    artifacts: StructuredArtifactAssertion[];
   };
   replays?: number;
   timeout_ms?: number;

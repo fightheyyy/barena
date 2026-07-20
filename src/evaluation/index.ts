@@ -4,6 +4,7 @@ export * from "./run-skill-evaluation";
 export * from "./static-admission";
 export * from "./live-policy";
 export * from "./evidence-redaction";
+export * from "./builtin-suites";
 export * from "./xiaoba-native-types";
 export * from "./xiaoba-native-input";
 export * from "./xiaoba-native-case";

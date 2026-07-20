@@ -172,7 +172,38 @@ Barena MVP1 is a TypeScript CLI/TUI for verifier-backed release evaluation of op
 
 ## Quick Start
 
-Once Barena is installed or linked, start with the guided workflow:
+Initialize one project-scoped Agent profile, then evaluate with the stored target, attempts, run directory, and pinned starter suite:
+
+```bash
+barena init --target openclaw \
+  --provider openai \
+  --model <model-id> \
+  --api-key-env OPENAI_API_KEY
+
+barena doctor
+barena eval skill ./my-skill
+```
+
+This writes `.barena/config.json` with target settings and **environment-variable names only**. Barena never writes API-key or base-URL values into the config, doctor output, case, or report. If the target Agent already owns OAuth or provider configuration, omit the provider flags; doctor reports that authentication as target-managed.
+
+`barena eval` is an alias for `barena evaluate`. Explicit flags always override project defaults. The default suite is `skillsbench:starter`, currently one pinned SkillsBench-derived dialogue-graph calibration task. It is an onboarding and integration proof, not a broad or official SkillsBench score.
+
+To configure another CLI Agent, point Barena at a strict portable JSON driver:
+
+```bash
+barena init --target my-agent \
+  --target-command ./my-agent-driver \
+  --provider openai \
+  --model <model-id> \
+  --api-key-env MY_AGENT_API_KEY
+
+barena doctor --target my-agent
+barena eval skill ./my-skill
+```
+
+The target Agent owns its provider call. Portable evaluation uses deterministic artifact/final-state verification and does not require a second Judge API. UserCat, InspectorCat, and ReviewerCat are XiaobaOS-native composite evaluator stages, not hidden extra Agents started for every portable run.
+
+For an interactive import/setup flow instead, start with:
 
 ```bash
 barena guide
@@ -221,6 +252,16 @@ Evaluate an OpenClaw Skill as a no-Skill baseline versus the candidate Skill:
 barena evaluate skill ./my-skill \
   --target openclaw \
   --case ./my-openclaw-case.json \
+  --attempts 3
+```
+
+Use the bundled SkillsBench-derived starter suite without writing a case file:
+
+```bash
+barena list suites
+barena eval skill ./my-skill \
+  --target openclaw \
+  --suite skillsbench:starter \
   --attempts 3
 ```
 
@@ -298,7 +339,11 @@ barena run opencode-ci --replays 1
 
 ```text
 barena
+barena init --target <xiaobaos|openclaw|custom-id> [--target-command ./driver] [--provider id --model id --api-key-env ENV_NAME]
+barena config show
+barena config path
 barena guide
+barena eval skill <path> [--suite skillsbench:starter]
 barena evaluate skill <path> --target xiaobaos --role <role-id> (--case <native-case.json> | --case-pack <pack.json>) --live-policy <policy.json> [--attempts 2] [--preflight-only]
 barena evaluate role <candidate-role-id> --baseline-role <role-id> (--case <native-case.json> | --case-pack <pack.json>) --live-policy <policy.json> [--attempts 2] [--preflight-only]
 barena evaluate skill <path> --target openclaw --case <agent-case.json> [--attempts 2]
@@ -315,8 +360,9 @@ barena report <run-id> [--format markdown|json]
 barena list subjects
 barena list runs
 barena list targets
+barena list suites
 barena tui [--snapshot] [--color|--no-color]
-barena doctor
+barena doctor [--target <id>]
 ```
 
 ---

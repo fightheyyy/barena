@@ -4,6 +4,7 @@ import path from "node:path";
 import { BarenaPortableEvaluatorRuntime } from "../evaluators/portable-evaluator-runtime";
 import { renderAgentE2EReport } from "../reports/run-renderers";
 import { OpenClawTargetAdapter } from "../targets/openclaw-target-adapter";
+import { validateStructuredJsonCheck } from "../verifier/artifact-verifier";
 import { ensureDir, readJson, writeJson } from "../utils/fs";
 import type {
   AgentE2ECaseV1,
@@ -212,6 +213,17 @@ function validateCase(value: AgentE2ECaseV1): void {
     }
     if (assertion.exists === false && assertion.contains !== undefined) {
       throw new Error(`Artifact assertion cannot combine exists=false with contains: ${relative}`);
+    }
+    if (assertion.exists === false && assertion.json_checks !== undefined) {
+      throw new Error(`Artifact assertion cannot combine exists=false with json_checks: ${relative}`);
+    }
+    if (assertion.json_checks !== undefined) {
+      if (!Array.isArray(assertion.json_checks) || assertion.json_checks.length === 0) {
+        throw new Error(`Artifact assertion json_checks must be non-empty: ${relative}`);
+      }
+      assertion.json_checks.forEach((check, index) => {
+        validateStructuredJsonCheck(check, `${relative}.json_checks[${index}]`);
+      });
     }
   }
   const fixtureDestinations = new Set<string>();
