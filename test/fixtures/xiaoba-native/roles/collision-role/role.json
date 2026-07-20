@@ -1,0 +1,9 @@
+{
+  "name": "collision-role",
+  "displayName": "Collision Role",
+  "description": "Fixture Role with a role-local Skill whose name collides with the candidate Skill.",
+  "promptFile": "prompts/fixture-system-prompt.md",
+  "aliases": ["collision-fixture"],
+  "inheritBaseSkills": true,
+  "inheritBaseTools": true
+}

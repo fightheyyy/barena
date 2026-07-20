@@ -1,0 +1,31 @@
+{
+  "schema": "barena.xiaoba_case_pack.v1",
+  "pack_id": "skillsbench-dialogue-graph-mini",
+  "source": {
+    "kind": "skillsbench",
+    "repository": "https://github.com/benchflow-ai/skillsbench",
+    "revision": "5720102e3d6b0d3471b9715995ff96144d9eefb7",
+    "license": "Apache-2.0"
+  },
+  "cases": [
+    {
+      "case_path": "cases/dialogue-graph-mini.json",
+      "source_task": {
+        "task_id": "dialogue-parser",
+        "task_path": "source/dialogue-parser-task.md",
+        "task_sha256": "d14e9102a433abcdb7cbab8a02e082b698fb87eb50fd9e8bc95c2ebb8d9cc1ab"
+      },
+      "adaptation": {
+        "prompt": "adapted",
+        "environment": "fixture_subset",
+        "verifier": "barena_structured_v1",
+        "notes": [
+          "Reduced the upstream dialogue fixture to a deterministic local calibration graph.",
+          "Rewrote /app absolute paths to workspace-relative paths.",
+          "Omitted Graphviz output and retained the JSON graph outcome.",
+          "Replaced the upstream Python verifier with trusted declarative Barena checks."
+        ]
+      }
+    }
+  ]
+}

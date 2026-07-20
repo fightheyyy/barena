@@ -1,0 +1,9 @@
+{
+  "name": "inherit-base-role",
+  "displayName": "Inherit Base Role",
+  "description": "Fixture Role that declares Base Skill inheritance.",
+  "promptFile": "prompts/fixture-system-prompt.md",
+  "aliases": ["inherit-fixture"],
+  "inheritBaseSkills": true,
+  "inheritBaseTools": true
+}

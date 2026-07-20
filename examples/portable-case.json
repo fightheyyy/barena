@@ -1,0 +1,28 @@
+{
+  "schema": "barena.agent_e2e_case.v1",
+  "case_id": "portable-offline-smoke",
+  "target": {
+    "adapter": "portable",
+    "runtime": "hermes"
+  },
+  "task": {
+    "prompt": "Create result.txt containing the exact marker BARENA_PORTABLE_OK."
+  },
+  "assertions": {
+    "artifacts": [
+      {
+        "path": "result.txt",
+        "contains": "BARENA_PORTABLE_OK"
+      }
+    ]
+  },
+  "replays": 1,
+  "timeout_ms": 5000,
+  "isolation": {
+    "level": "policy_only",
+    "network": "disabled",
+    "writable_roots": [
+      "workspace"
+    ]
+  }
+}

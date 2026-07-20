@@ -1,0 +1,34 @@
+{
+  "schema": "barena.agent_e2e_case.v1",
+  "case_id": "openclaw-read-and-write-artifact",
+  "target": {
+    "adapter": "openclaw",
+    "agent": "main",
+    "env_allowlist": ["OPENAI_API_KEY"]
+  },
+  "task": {
+    "prompt": "Read fixture/input.txt, then create result.txt containing the exact phrase BARENA_E2E_OK. Do not modify files outside the current workspace."
+  },
+  "fixtures": [
+    {
+      "source": "fixtures/input.txt",
+      "destination": "fixture/input.txt"
+    }
+  ],
+  "assertions": {
+    "artifacts": [
+      {
+        "path": "result.txt",
+        "exists": true,
+        "contains": "BARENA_E2E_OK"
+      }
+    ]
+  },
+  "replays": 1,
+  "timeout_ms": 180000,
+  "isolation": {
+    "level": "policy_only",
+    "network": "allowlisted",
+    "writable_roots": ["workspace"]
+  }
+}
