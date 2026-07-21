@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="assets/hero.gif" alt="Barena — end-to-end testing and release CI for AI agents." width="100%" />
+<img src="assets/hero.gif" alt="Barena — E2E evaluation and release gates for Agent Harness Evolution." width="100%" />
 
 # Barena
 
-### End-to-end testing and release CI for AI agents
+### E2E evaluation and release gates for Agent Harness Evolution
 
 [![Barena](https://img.shields.io/badge/Barena-v0.1.0-6B7280.svg?labelColor=111827)](https://github.com/fightheyyy/barena)
 [![Agent E2E](https://img.shields.io/badge/AI_Agent-E2E_Testing-D4A72C.svg?labelColor=111827)](#how-it-works)
@@ -23,9 +23,11 @@
 
 ---
 
-> What if every agent release had to prove it could still complete real user tasks?
+> What if every Agent Harness change had to prove it could still complete real user tasks?
 
-Barena is an open-source end-to-end testing and release CI project for AI agents. It treats the agent system — model, prompt, skills, tools, memory, and runtime — as a black box, then evaluates observable behavior with clean runs, traces, artifacts, replay evidence, verifiers, and release decisions.
+Barena is an open-source E2E evaluation and release framework for Agent Harness Evolution. It treats the complete harness — model, prompt, Role, Skills, tools, memory, permissions, and runtime — as a black box, then evaluates each concrete change through clean baseline/candidate runs, traces, artifacts, replay evidence, verifiers, and release decisions.
+
+Here, **harness evolution** means versioned changes to the components that shape Agent behavior; it does not mean autonomous self-modification. Phase 1 makes Skill and Role changes first-class while preserving the same release model for future model, prompt, tool, memory-policy, and runtime changes.
 
 The authoritative product scope is locked in [`docs/POSITIONING.md`](docs/POSITIONING.md): Barena evaluates whether a concrete Agent change is effective, stable, regression-free, and ready to ship. Phase 1 combines native XiaobaOS Role/Skill release CI with a portable deterministic verifier for external CLI agents.
 
@@ -112,7 +114,7 @@ The native path uses XiaobaOS trace and Arena-stage evidence. The portable path 
 
 XiaobaOS 0.1.1 and 0.2.0 run UserCat, InspectorCat, and ReviewerCat as a composite native Arena pipeline—not three independent evaluator `AgentSession`s. Portable runs mark those stages `not_applicable`, emit no evaluator traces, and cap boundary-only confidence at `medium`.
 
-Barena is a release gate, not a benchmark leaderboard. The goal is not one impressive score; it is repeatable proof that an agent capability can cross a trust boundary without breaking expected behavior.
+Barena is a release gate for Agent Harness changes, not a benchmark leaderboard. The goal is not one impressive score; it is repeatable proof that a harness change improves observable behavior without breaking capabilities users already trust.
 
 ---
 
@@ -151,7 +153,7 @@ Stock XiaobaOS 0.2.0 is compatible with Barena's native probe and artifact contr
 
 ## MVP1
 
-Barena MVP1 is a TypeScript CLI/TUI for verifier-backed release evaluation of open-source Agent capabilities.
+Barena MVP1 is a TypeScript CLI/TUI for verifier-backed release evaluation of Agent Harness changes, with Skill and Role changes implemented as the first release subjects.
 
 | Area | Capability |
 |---|---|
