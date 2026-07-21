@@ -702,7 +702,15 @@ export class XiaoBaNativeEvaluationRunner {
         homeRoot
       );
       const executeEnv = live
-        ? paidRuntimeEnvironment(this.environment, executionRoot, staged.roles_root, homeRoot, live.policy)
+        ? paidRuntimeEnvironment(
+            this.environment,
+            executionRoot,
+            staged.roles_root,
+            homeRoot,
+            live.policy,
+            caseDefinition,
+            requireLiveRuntimeContract(live.preflight)
+          )
         : policyFreeRuntimeEnvironment(this.environment, request.xiaoba, executionRoot, staged.roles_root, homeRoot);
       const commandResults: XiaoBaCommandResult[] = [];
       let roleManifest = "";
@@ -753,7 +761,10 @@ export class XiaoBaNativeEvaluationRunner {
         passEnvNames
       );
       if (live) {
-        const reservedCalls = Object.values(providerCallReservationForCase(caseDefinition))
+        const reservedCalls = Object.values(providerCallReservationForCase(
+          caseDefinition,
+          requireLiveRuntimeContract(live.preflight)
+        ))
           .reduce((sum, value) => sum + value, 0);
         if (
           live.ledger.observed_barena_attempts >= live.ledger.planned_barena_attempts ||
@@ -829,13 +840,14 @@ export class XiaoBaNativeEvaluationRunner {
                   : !assertionsPassed
                     ? "artifact_assertion_failed"
                     : "unstable_result";
-      const callObservation = live
+          const callObservation = live
         ? providerCallRecordsFromEvidence(
             captured.refs.evaluator,
             arm,
             caseDefinition,
             attempt,
-            live.policy
+            live.policy,
+            requireLiveRuntimeContract(live.preflight)
           )
         : undefined;
       if (live && callObservation) {
@@ -929,7 +941,8 @@ export class XiaoBaNativeEvaluationRunner {
           arm,
           caseDefinition,
           attempt,
-          live.policy
+          live.policy,
+          requireLiveRuntimeContract(live.preflight)
         );
         live.ledger.call_records.push(...callObservation.records);
         live.ledger.model_invoked = callObservation.raw_call_count > 0 ? true : live.ledger.model_invoked;
@@ -1068,7 +1081,10 @@ export class XiaoBaNativeEvaluationRunner {
               role_manifest_sha256: hashDirectory(path.dirname(roleManifest)),
               subject_manifest_sha256: hashDirectory(path.dirname(subjectManifest)),
               fixture_seed_sha256: hashDirectory(seedRoot),
-              provider_call_reservation: providerCallReservationForCase(caseDefinition),
+              provider_call_reservation: providerCallReservationForCase(
+                caseDefinition,
+                requireLiveRuntimeContract(live.preflight)
+              ),
               execute_args: args,
             });
           } finally {
@@ -1415,7 +1431,9 @@ function paidRuntimeEnvironment(
   executionRoot: string,
   rolesRoot: string,
   homeRoot: string,
-  policy: XiaoBaLivePolicyV1
+  policy: XiaoBaLivePolicyV1,
+  caseDefinition: XiaoBaNativeCaseV1,
+  runtimeContract: XiaoBaLiveRuntimeContractV1,
 ): NodeJS.ProcessEnv {
   const env = setupRuntimeEnvironment(source, executionRoot, rolesRoot, homeRoot);
   for (const name of [policy.credential_env, policy.api_base_env]) {
@@ -1424,7 +1442,26 @@ function paidRuntimeEnvironment(
   env.XIAOBA_LLM_PROVIDER = policy.provider;
   env.XIAOBA_LLM_MODEL = policy.model;
   env.XIAOBA_LLM_MAX_TOKENS = String(policy.max_output_tokens);
+  env.XIAOBA_ARENA_LIVE_MODE = "barena";
+  env.XIAOBA_ARENA_MAX_INPUT_TOKENS = String(policy.max_input_tokens);
+  env.XIAOBA_ARENA_MAX_PROVIDER_CALLS = String(
+    Object.values(providerCallReservationForCase(caseDefinition, runtimeContract))
+      .reduce((sum, value) => sum + value, 0)
+  );
+  env.XIAOBA_ARENA_CREDENTIAL_ENV = policy.credential_env;
+  env.XIAOBA_ARENA_API_BASE_ENV = policy.api_base_env;
   return env;
+}
+
+function requireLiveRuntimeContract(preflight: XiaoBaLivePolicyPreflight): XiaoBaLiveRuntimeContractV1 {
+  const contract = preflight.runtime_contract.contract;
+  if (!contract) {
+    throw new XiaoBaNativeError(
+      "live_runtime_contract_unsupported",
+      "Paid XiaobaOS execution requires a verified live runtime contract."
+    );
+  }
+  return contract;
 }
 
 function policyFreePassEnv(names: string[]): string[] {
@@ -1440,6 +1477,11 @@ function paidPassEnvNames(policy: XiaoBaLivePolicyV1): string[] {
     "XIAOBA_LLM_PROVIDER",
     "XIAOBA_LLM_MODEL",
     "XIAOBA_LLM_MAX_TOKENS",
+    "XIAOBA_ARENA_LIVE_MODE",
+    "XIAOBA_ARENA_MAX_INPUT_TOKENS",
+    "XIAOBA_ARENA_MAX_PROVIDER_CALLS",
+    "XIAOBA_ARENA_CREDENTIAL_ENV",
+    "XIAOBA_ARENA_API_BASE_ENV",
   ];
 }
 
@@ -2488,7 +2530,8 @@ function providerCallRecordsFromEvidence(
   arm: XiaoBaNativeArm,
   caseDefinition: XiaoBaNativeCaseV1,
   attempt: number,
-  policy: XiaoBaLivePolicyV1
+  policy: XiaoBaLivePolicyV1,
+  runtimeContract: XiaoBaLiveRuntimeContractV1,
 ): XiaoBaProviderCallObservation {
   const refs = [...new Set(evidenceRefs.filter((ref) => /provider-calls.*\.ndjson$/i.test(path.basename(ref))))].sort();
   const records: XiaoBaProviderCallRecord[] = [];
@@ -2569,14 +2612,16 @@ function providerCallRecordsFromEvidence(
       });
     }
   }
-  const reserved = providerCallReservationForCase(caseDefinition);
+  const reserved = providerCallReservationForCase(caseDefinition, runtimeContract);
   for (const component of PROVIDER_CALL_COMPONENTS) {
     const observed = records.filter((record) => record.component === component).length;
     if (observed > reserved[component as keyof typeof reserved]) {
       errors.push(`provider_call_reservation_exceeded:${component}:${observed}>${reserved[component as keyof typeof reserved]}`);
     }
   }
-  for (const component of ["target", "usercat"] as const) {
+  const requiredComponents: Array<"target" | "usercat"> = ["target"];
+  if ((caseDefinition.max_turns ?? 4) > 1) requiredComponents.push("usercat");
+  for (const component of requiredComponents) {
     if (!records.some((record) => record.component === component)) {
       errors.push(`missing_provider_call_component:${component}`);
     }
@@ -2593,17 +2638,18 @@ function providerCallRecordsFromEvidence(
 }
 
 function providerCallReservationForCase(
-  caseDefinition: XiaoBaNativeCaseV1
+  caseDefinition: XiaoBaNativeCaseV1,
+  runtimeContract: XiaoBaLiveRuntimeContractV1,
 ): Record<XiaoBaProviderCallRecord["component"], number> {
   const maxTurns = caseDefinition.max_turns ?? 4;
   const replayAttempts = caseDefinition.replay_attempts ?? 1;
   const maxReplayCases = caseDefinition.max_replay_cases ?? 1;
   return {
-    target: maxTurns,
-    usercat: maxTurns,
-    inspector: 0,
-    reviewer: 0,
-    replay: replayAttempts * maxReplayCases * maxTurns,
+    target: maxTurns * runtimeContract.bounds.target_calls_per_turn,
+    usercat: Math.max(0, maxTurns - 1) * runtimeContract.bounds.usercat_calls_per_turn,
+    inspector: runtimeContract.bounds.inspector_calls_per_attempt,
+    reviewer: runtimeContract.bounds.reviewer_calls_per_attempt,
+    replay: replayAttempts * maxReplayCases * maxTurns * runtimeContract.bounds.replay_calls_per_case_turn,
   };
 }
 

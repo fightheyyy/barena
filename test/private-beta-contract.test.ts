@@ -547,6 +547,11 @@ test("identity, retry, and evaluator-telemetry failures stop before the next pai
   for (const item of cases) {
     await t.test(item.mode, () => {
       const fixture = makeNativeFixture({ wrapperMode: item.mode });
+      if (item.mode === "missing-evaluator-telemetry") {
+        const caseDefinition = readJson<JsonRecord>(fixture.casePath);
+        caseDefinition.max_turns = 2;
+        writeJson(fixture.casePath, caseDefinition);
+      }
       const policy = validLivePolicy();
       policy.max_provider_calls = 20;
       policy.worst_case_usd = 0.03;
@@ -572,7 +577,7 @@ test("post-call command failure preserves known spend and stops the run", () => 
   const payload = parseJson<Record<string, unknown>>(result.stdout);
   assert.equal(payload.reason_code, "xiaoba_runner_failed");
   assert.equal((payload.live as JsonRecord).model_invoked, true);
-  assert.equal((payload.usage as JsonRecord).provider_calls, 3);
+  assert.equal((payload.usage as JsonRecord).provider_calls, 2);
   assert.equal(Number((payload.usage as JsonRecord).estimated_cost_usd) > 0, true);
 });
 
@@ -590,7 +595,7 @@ test("an unsafe live baseline holds before the candidate arm", () => {
   const payload = parseJson<Record<string, unknown>>(result.stdout);
   assert.equal(payload.decision, "held");
   assert.equal(payload.reason_code, "xiaoba_arena_unsafe");
-  assert.equal((payload.usage as JsonRecord).provider_calls, 3);
+  assert.equal((payload.usage as JsonRecord).provider_calls, 2);
   assert.equal(Number((payload.usage as JsonRecord).estimated_cost_usd) > 0, true);
   assert.equal((payload.usage as JsonRecord).baseline_complete, true);
   assert.equal((payload.usage as JsonRecord).candidate_complete, false);
@@ -641,7 +646,7 @@ test("a one-attempt-per-arm live smoke accounts for physical calls and never ret
   assert.equal(payload.reason_code, "insufficient_live_replays");
   assert.equal((payload.provider_identity as JsonRecord).status, "verified");
   assert.equal((payload.usage as JsonRecord).status, "complete");
-  assert.equal((payload.usage as JsonRecord).provider_calls, 6);
+  assert.equal((payload.usage as JsonRecord).provider_calls, 4);
   assert.equal((payload.budget as JsonRecord).max_output_tokens_per_call, 100);
   assert.equal(((payload.budget as JsonRecord).enforcement as JsonRecord).no_automatic_paid_retry, true);
   assert.equal((payload.redaction as JsonRecord).status, "verified");

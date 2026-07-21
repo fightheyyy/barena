@@ -11,6 +11,7 @@ import { verifyArtifactContent, type StructuredArtifactAssertion } from "../src/
 const repoRoot = path.resolve(__dirname, "..");
 const packRoot = path.join(repoRoot, "calibration", "skillsbench", "dialogue-graph-mini");
 const packPath = path.join(packRoot, "case-pack.json");
+const validationPackPath = path.join(packRoot, "xiaoba-validation-pack.json");
 const skillPath = path.join(packRoot, "skill", "dialogue-graph");
 const fakeXiaoBa = path.join(repoRoot, "test", "fixtures", "targets", "fake-xiaoba-native.mjs");
 const rolesRoot = path.join(repoRoot, "test", "fixtures", "xiaoba-native", "roles");
@@ -66,6 +67,46 @@ test("trusted structured JSON verification rejects a semantic graph near miss", 
   assert.match(nearMiss.detail, /unreachable/i);
 });
 
+test("XiaobaOS validation pack maps one pinned SkillsBench task to replay and UserCat E2E cases", () => {
+  const loaded = loadXiaoBaCasePack(validationPackPath);
+  assert.equal(loaded.manifest.pack_id, "skillsbench-dialogue-graph-xiaoba-validation");
+  assert.equal(loaded.cases.length, 2);
+  assert.deepEqual(loaded.reference.task_ids, ["dialogue-parser"]);
+
+  const replay = loaded.cases.find((item) => item.case_id === "skillsbench-dialogue-graph-mini");
+  const boundary = loaded.cases.find((item) => item.case_id === "skillsbench-dialogue-graph-usercat-boundary");
+  assert.ok(replay);
+  assert.ok(boundary);
+  assert.equal(replay.source?.task_id, "dialogue-parser");
+  assert.equal(boundary.source?.task_id, "dialogue-parser");
+  assert.equal(boundary.scenario, "skillsbench:dialogue-parser:usercat-boundary");
+  assert.equal(replay.max_turns, 1);
+  assert.equal(boundary.max_turns, 2);
+  assert.equal(boundary.task.prompt.includes("dialogue.json"), false);
+  assert.equal(boundary.task.prompt.includes("dialogue-graph"), false);
+  assert.equal(boundary.task.prompt.includes("verifier"), false);
+  assert.equal(boundary.source?.adaptation.notes.some((note) => /low-information/i.test(note)), true);
+  assert.deepEqual(replay.assertions.artifacts.map((artifact) => artifact.path), ["dialogue.json"]);
+  assert.deepEqual(boundary.assertions.artifacts, replay.assertions.artifacts);
+  assert.equal(replay.source?.adaptation.notes.some((note) => /solution\.py parser/i.test(note)), true);
+});
+
+test("reusing a SkillsBench task across cases requires identical source provenance", () => {
+  const copiedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "barena-skillsbench-shared-task-"));
+  fs.cpSync(packRoot, copiedRoot, { recursive: true });
+  const manifestPath = path.join(copiedRoot, "xiaoba-validation-pack.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+    cases: Array<{ source_task: { task_path: string } }>;
+  };
+  fs.copyFileSync(
+    path.join(copiedRoot, "source", "dialogue-parser-task.md"),
+    path.join(copiedRoot, "source", "dialogue-parser-task-copy.md")
+  );
+  manifest.cases[1].source_task.task_path = "source/dialogue-parser-task-copy.md";
+  writeJson(manifestPath, manifest);
+  assert.throws(() => loadXiaoBaCasePack(manifestPath), /conflicting SkillsBench source provenance/i);
+});
+
 test("SkillsBench-derived dialogue calibration preserves prompts and clears only the activated candidate", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "barena-skillsbench-e2e-"));
   const projectRoot = path.join(root, "xiaoba-project");
@@ -111,6 +152,49 @@ test("SkillsBench-derived dialogue calibration preserves prompts and clears only
   assert.match(report, /Case source: skillsbench @ 5720102e3d6b0d3471b9715995ff96144d9eefb7/);
   assert.match(report, /Source tasks: dialogue-parser/);
   assert.match(report, /Official harness compatible: no \(derived projection\)/);
+});
+
+test("XiaobaOS validation pack evaluates fixed replay and UserCat boundary cases under one pinned task", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "barena-skillsbench-validation-"));
+  const projectRoot = path.join(root, "xiaoba-project");
+  fs.mkdirSync(path.join(projectRoot, "dist"), { recursive: true });
+  fs.writeFileSync(path.join(projectRoot, "dist", "index.js"), "#!/usr/bin/env node\n", "utf8");
+
+  const request = createXiaoBaNativeSkillRequest({
+    roleId: "inherit-base-role",
+    skillPath,
+    casePackPath: validationPackPath,
+    attemptsPerArm: 1,
+    binaryPath: fakeXiaoBa,
+    projectRoot,
+    rolesRoot,
+    passEnv: [],
+  });
+  assert.deepEqual(request.cases.map((item) => item.case_id), [
+    "skillsbench-dialogue-graph-mini",
+    "skillsbench-dialogue-graph-usercat-boundary",
+  ]);
+
+  const result = await runXiaoBaNativeEvaluation({ request, runs_root: path.join(root, "runs") });
+  assert.equal(result.decision, "cleared");
+  assert.equal(result.reason_code, "positive_lift");
+  assert.deepEqual(result.baseline.counts, { planned: 2, pass: 0, fail: 2, blocked: 0, unsafe: 0 });
+  assert.deepEqual(result.candidate.counts, { planned: 2, pass: 2, fail: 0, blocked: 0, unsafe: 0 });
+  assert.deepEqual([...new Set(result.candidate.attempts.map((item) => item.case_id))], [
+    "skillsbench-dialogue-graph-mini",
+    "skillsbench-dialogue-graph-usercat-boundary",
+  ]);
+  assert.equal(result.baseline.attempts.every((attempt) => !attempt.activation.observed), true);
+  assert.equal(result.candidate.attempts.every((attempt) => attempt.activation.observed), true);
+  assert.equal(result.candidate.attempts.every((attempt) =>
+    attempt.assertions.every((assertion) => assertion.status === "pass")
+  ), true);
+
+  const prompts = new Map(request.cases.map((item) => [item.case_id, item.task.prompt]));
+  for (const attempt of [...result.baseline.attempts, ...result.candidate.attempts]) {
+    const manifest = JSON.parse(fs.readFileSync(attempt.refs.request_manifest, "utf8")) as { delivered_prompt: string };
+    assert.equal(manifest.delivered_prompt, prompts.get(attempt.case_id));
+  }
 });
 
 function writeJson(filePath: string, value: unknown): void {

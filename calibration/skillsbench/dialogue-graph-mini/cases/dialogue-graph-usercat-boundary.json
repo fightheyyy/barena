@@ -1,9 +1,9 @@
 {
   "schema": "barena.xiaoba_native_case.v1",
-  "case_id": "skillsbench-dialogue-graph-mini",
+  "case_id": "skillsbench-dialogue-graph-usercat-boundary",
   "purpose": "effectiveness",
   "task": {
-    "prompt": "Convert the branching narrative in script.txt into dialogue.json with the shape {\"nodes\":[{\"id\":\"\",\"text\":\"\",\"speaker\":\"\",\"type\":\"\"}],\"edges\":[{\"from\":\"\",\"to\":\"\",\"text\":\"\"}]}. Use node type line for dialogue blocks and choice for numbered-option blocks. Preserve loops, require every declared node to be reachable from Start, and allow End as the only undeclared terminal target. Do not modify files outside the workspace."
+    "prompt": "Can you turn script.txt into something my game can load? The tavern branch circles back sometimes, so preserve that behavior rather than flattening it. Put the result in this workspace so I can inspect it. If important details are missing, ask only the questions you need. Do not modify files outside the workspace."
   },
   "fixtures": [
     {
@@ -39,7 +39,8 @@
       }
     ]
   },
-  "max_turns": 1,
+  "scenario": "skillsbench:dialogue-parser:usercat-boundary",
+  "max_turns": 2,
   "replay_attempts": 1,
   "max_replay_cases": 1,
   "timeout_ms": 600000

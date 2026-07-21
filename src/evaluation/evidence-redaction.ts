@@ -153,7 +153,11 @@ export function scanRetainedTreeForSecrets(
       }
     }
     if (!looksBinary(bytes)) {
-      for (const fieldName of unredactedStructuredAssignments(bytes.toString("utf8"), context)) {
+      for (const fieldName of unredactedStructuredAssignmentsInFile(
+        bytes.toString("utf8"),
+        path.extname(entry.path).toLowerCase(),
+        context
+      )) {
         hits.push({ file_ref: entry.path, secret_name: `structured.${fieldName}` });
       }
     }
@@ -283,7 +287,7 @@ function sanitizeNdjsonText(
 }
 
 function sanitizeValue(value: unknown, context: EvidenceRedactionContext, stats: RedactionStats): unknown {
-  if (typeof value === "string") return replaceExactSecrets(value, context, stats);
+  if (typeof value === "string") return sanitizeText(value, context, stats);
   if (Array.isArray(value)) return value.map((entry) => sanitizeValue(entry, context, stats));
   if (typeof value !== "object" || value === null) return value;
 
@@ -337,6 +341,58 @@ function unredactedStructuredAssignments(value: string, context: EvidenceRedacti
       fields.add(normalizeKey(key));
     }
   }
+  return [...fields].sort();
+}
+
+function unredactedStructuredAssignmentsInFile(
+  value: string,
+  extension: string,
+  context: EvidenceRedactionContext
+): string[] {
+  if (extension === ".json") {
+    try {
+      return unredactedStructuredValues(JSON.parse(value) as unknown, context);
+    } catch {
+      return unredactedStructuredAssignments(value, context);
+    }
+  }
+  if ([".jsonl", ".ndjson"].includes(extension)) {
+    const fields = new Set<string>();
+    for (const line of value.split(/\r?\n/).filter(Boolean)) {
+      let lineFields: string[];
+      try {
+        lineFields = unredactedStructuredValues(JSON.parse(line) as unknown, context);
+      } catch {
+        lineFields = unredactedStructuredAssignments(line, context);
+      }
+      for (const field of lineFields) fields.add(field);
+    }
+    return [...fields].sort();
+  }
+  return unredactedStructuredAssignments(value, context);
+}
+
+function unredactedStructuredValues(value: unknown, context: EvidenceRedactionContext): string[] {
+  const fields = new Set<string>();
+  const visit = (current: unknown): void => {
+    if (typeof current === "string") {
+      for (const field of unredactedStructuredAssignments(current, context)) fields.add(field);
+      return;
+    }
+    if (Array.isArray(current)) {
+      for (const entry of current) visit(entry);
+      return;
+    }
+    if (typeof current !== "object" || current === null) return;
+    for (const [key, fieldValue] of Object.entries(current as Record<string, unknown>)) {
+      if (shouldRedactStructuredField(key, context)) {
+        if (typeof fieldValue !== "string" || !REDACTED_VALUE.test(fieldValue)) fields.add(normalizeKey(key));
+      } else {
+        visit(fieldValue);
+      }
+    }
+  };
+  visit(value);
   return [...fields].sort();
 }
 

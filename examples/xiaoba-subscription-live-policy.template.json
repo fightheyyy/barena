@@ -1,0 +1,48 @@
+{
+  "schema": "barena.live_policy.v1",
+  "billing_mode": "subscription",
+  "provider": "REPLACE_WITH_PROVIDER_ID",
+  "model": "REPLACE_WITH_MODEL_ID",
+  "credential_env": "XIAOBA_LLM_API_KEY",
+  "api_base_env": "XIAOBA_LLM_API_BASE",
+  "max_input_tokens": 200000,
+  "max_output_tokens": 2048,
+  "max_provider_calls": 32,
+  "pricing": {
+    "provider": "REPLACE_WITH_PROVIDER_ID",
+    "model": "REPLACE_WITH_MODEL_ID",
+    "api_base_env": "XIAOBA_LLM_API_BASE",
+    "currency": "USD",
+    "input_usd_per_million_tokens": 0,
+    "output_usd_per_million_tokens": 0,
+    "source": "REPLACE_WITH_SUBSCRIPTION_ENTITLEMENT_SOURCE",
+    "sourced_at": "REPLACE_WITH_CURRENT_ISO_8601_TIMESTAMP"
+  },
+  "budget_usd": 0,
+  "worst_case_usd": 0,
+  "hard_limit": {
+    "mode": "subscription_entitlement",
+    "verified": false,
+    "reference": "REPLACE_WITH_VERIFIABLE_ENTITLEMENT_REFERENCE",
+    "verified_at": "REPLACE_WITH_CURRENT_ISO_8601_TIMESTAMP",
+    "provider": "REPLACE_WITH_PROVIDER_ID",
+    "credential_env": "XIAOBA_LLM_API_KEY",
+    "api_base_env": "XIAOBA_LLM_API_BASE",
+    "currency": "USD",
+    "cap_usd": 0
+  },
+  "accepted_scan_finding_ids": [],
+  "retention": {
+    "profile": "local-xiaoba-evaluation"
+  },
+  "redaction": {
+    "profile": "exact-secret-and-structured-fields",
+    "secret_env_names": [
+      "XIAOBA_LLM_API_KEY"
+    ],
+    "structured_field_names": [
+      "api_key",
+      "authorization"
+    ]
+  }
+}

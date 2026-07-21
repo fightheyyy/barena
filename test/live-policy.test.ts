@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   bindXiaoBaLivePolicy,
+  calculateProviderCallPlan,
   evaluateXiaoBaLivePreflight,
   loadXiaoBaLivePolicy,
   validateXiaoBaLivePolicy,
@@ -133,6 +134,31 @@ test("live policy rejects zero and negative token prices", async (t) => {
   }
 });
 
+test("subscription live policy uses zero-dollar accounting with hard call/token limits", () => {
+  const policy = livePolicy();
+  policy.billing_mode = "subscription";
+  policy.pricing.input_usd_per_million_tokens = 0;
+  policy.pricing.output_usd_per_million_tokens = 0;
+  policy.pricing.source = "fixture subscription entitlement";
+  policy.budget_usd = 0;
+  policy.worst_case_usd = 0;
+  policy.hard_limit.mode = "subscription_entitlement";
+  policy.hard_limit.cap_usd = 0;
+
+  const result = evaluateAt(policy, FIXED_NOW);
+  assert.equal(result.status, "ready");
+  assert.equal(result.budget.billing_mode, "subscription");
+  assert.equal(result.budget.calculated_worst_case_usd, 0);
+
+  const falseMeteringClaim = clonePolicy(policy);
+  falseMeteringClaim.pricing.input_usd_per_million_tokens = 1;
+  assertPolicyValidationRejected(falseMeteringClaim);
+
+  const wrongBoundary = clonePolicy(policy);
+  wrongBoundary.hard_limit.mode = "prepaid_balance";
+  assertPolicyValidationRejected(wrongBoundary);
+});
+
 test("pricing and hard-limit evidence are bound to the selected provider scope", async (t) => {
   const mutations: Array<{ name: string; mutate: (policy: XiaoBaLivePolicyV1) => void }> = [
     { name: "pricing provider", mutate: (policy) => { policy.pricing.provider = "other-provider"; } },
@@ -199,7 +225,7 @@ test("budget chain requires calculated <= declared <= hard cap <= budget", async
   await t.test("valid chain is ready", () => {
     const result = evaluateAt(livePolicy(), FIXED_NOW);
     assert.equal(result.ready_to_invoke, true);
-    assert.equal(result.budget.calculated_worst_case_usd, 0.018);
+    assert.equal(result.budget.calculated_worst_case_usd, 0.012);
     assert.equal(result.budget.declared_worst_case_usd, 0.03);
     assert.equal(result.budget.hard_limit.cap_usd, 0.04);
     assert.equal(result.budget.budget_usd, 0.05);
@@ -213,7 +239,7 @@ test("budget chain requires calculated <= declared <= hard cap <= budget", async
     {
       name: "declared worst case below calculation",
       reason: "live_worst_case_understated",
-      mutate: (policy) => { policy.worst_case_usd = 0.017; },
+      mutate: (policy) => { policy.worst_case_usd = 0.011; },
     },
     {
       name: "hard cap below declared worst case",
@@ -241,10 +267,10 @@ test("budget chain requires calculated <= declared <= hard cap <= budget", async
 test("provider-call reservation is distinct from Barena arm attempts", () => {
   const ready = evaluateAt(livePolicy(), FIXED_NOW);
   assert.equal(ready.budget.planned_barena_attempts, 2);
-  assert.equal(ready.budget.planned_provider_calls, 6);
+  assert.equal(ready.budget.planned_provider_calls, 4);
   assert.deepEqual(ready.budget.planned_calls_by_component, {
     target: 2,
-    usercat: 2,
+    usercat: 0,
     inspector: 0,
     reviewer: 0,
     replay: 2,
@@ -255,9 +281,33 @@ test("provider-call reservation is distinct from Barena arm attempts", () => {
   attemptSizedReservation.max_provider_calls = 2;
   const held = evaluateAt(attemptSizedReservation, FIXED_NOW);
   assert.equal(held.budget.planned_barena_attempts, 2);
-  assert.equal(held.budget.planned_provider_calls, 6);
+  assert.equal(held.budget.planned_provider_calls, 4);
   assert.equal(held.status, "held");
   assert.equal(held.reason_code, "live_provider_call_limit_insufficient");
+});
+
+test("provider-call planning uses XiaobaOS enforced calls-per-turn bounds", () => {
+  const contract = JSON.parse(JSON.stringify(FUTURE_LIVE_RUNTIME_CONTRACT)) as XiaoBaLiveRuntimeContractV1;
+  contract.bounds.target_calls_per_turn = 4;
+  contract.bounds.replay_calls_per_case_turn = 4;
+  const plan = calculateProviderCallPlan(liveRequest(), contract);
+  assert.deepEqual(plan, {
+    target: 8,
+    usercat: 0,
+    inspector: 0,
+    reviewer: 0,
+    replay: 8,
+  });
+
+  const followupRequest = liveRequest();
+  followupRequest.cases[0].max_turns = 2;
+  assert.deepEqual(calculateProviderCallPlan(followupRequest, contract), {
+    target: 16,
+    usercat: 2,
+    inspector: 0,
+    reviewer: 0,
+    replay: 16,
+  });
 });
 
 test("future-contract simulator probe is credential-free and machine-readable", () => {

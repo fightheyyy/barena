@@ -102,6 +102,23 @@ Barena is a release gate for Agent Harness changes, not a benchmark leaderboard.
 
 ---
 
+## Validation with SkillsBench
+
+Barena uses SkillsBench tasks to validate its core claim: a concrete Agent Harness change should produce reproducible baseline/candidate evidence that reveals capability lift, regressions, and instability. SkillsBench is the public case source; Barena adds paired execution, trace and artifact retention, replay, deterministic verification, and the release decision.
+
+The XiaobaOS validation pack projects one pinned SkillsBench `dialogue-parser` task into the two lanes shown above:
+
+| Lane | Case | Validation question |
+|---|---|---|
+| Fixed-case replay | Explicit adapted graph specification | Does the candidate preserve and repeat a known capability? |
+| UserCat Agent E2E | Low-information request with one adaptive follow-up available and the same hidden oracle | Can the candidate recover the required outcome when a real user's request is incomplete? |
+
+Both cases compare the same XiaobaOS Role without and with the candidate `dialogue-graph` Skill. They retain the upstream revision and task hash, use the same workspace fixture, and verify the resulting graph through Barena's trusted structured artifact checks. The executable parser requirement is explicitly omitted because this calibration does not execute subject-authored verifier code. See the complete [XiaobaOS validation protocol](calibration/skillsbench/dialogue-graph-mini/VALIDATION.md).
+
+This repository proves the case projection and paired orchestration with deterministic contract tests. A local additive XiaobaOS audit-contract patch also completed Barena preflight and reached the real provider boundary with native trace, Arena-stage, verifier, redaction, cleanup, and physical-call evidence. That run stopped fail-closed on an expired local OAuth session (`401`; target trace reported zero prompt/completion tokens; billing usage unavailable; zero retry) before the candidate arm, so it does **not** establish live capability lift. Until a complete baseline/candidate run is published, this remains a **SkillsBench-derived Barena calibration**, not an official SkillsBench result or completed effectiveness claim.
+
+---
+
 ## Runtime Support
 
 Barena ships two explicit evidence profiles:
@@ -113,7 +130,7 @@ Portable clearance is real but lower-evidence than XiaobaOS native clearance. Re
 
 OpenClaw has a built-in adapter. Hermes is driver-compatible in this release; the bundled driver is an offline conformance example, not a claim of native/live Hermes validation.
 
-Stock XiaobaOS 0.2.0 is compatible with Barena's native probe and artifact contracts, but it does not yet expose the `arena live-contract --json` capability or authoritative physical provider-call telemetry required for paid/live evaluation. Barena fails closed with `live_runtime_contract_unsupported` before either arm starts. The repository's fake live target exercises a future additive contract; it is not evidence that stock XiaobaOS is live-ready.
+Released XiaobaOS 0.2.0 is compatible with Barena's native probe and artifact contracts, but it does not yet ship the `arena live-contract --json` capability or authoritative physical provider-call telemetry required for paid/live evaluation. Barena therefore holds an unpatched installation before either arm starts. The additive audit-contract patch has been exercised locally through a real provider request, but is not presented as a released XiaobaOS capability.
 
 ---
 
@@ -124,8 +141,8 @@ Stock XiaobaOS 0.2.0 is compatible with Barena's native probe and artifact contr
 | Local `SKILL.md` directory | Supported | Import, scan, run, replay, report |
 | GitHub skill repository | Supported | Clone-and-scan only; no install scripts |
 | Built-in agent target profile | Supported | `opencode`, `xiaoba`, `hermes`, `openclaw` |
-| XiaobaOS Skill effectiveness | Native contract | Same immutable Role: `role` baseline vs `role_skill` candidate; stock 0.2.0 live runs are held before paid execution |
-| XiaobaOS Role effectiveness | Native contract | Explicit baseline Role vs candidate Role under pinned cases; stock 0.2.0 live runs are held before paid execution |
+| XiaobaOS Skill effectiveness | Native contract | Same immutable Role: `role` baseline vs `role_skill` candidate; an unpatched 0.2.0 install is held before paid execution |
+| XiaobaOS Role effectiveness | Native contract | Explicit baseline Role vs candidate Role under pinned cases; an unpatched 0.2.0 install is held before paid execution |
 | XiaobaOS native trace package | Supported | Session-log-v3 traces, Arena stages, artifacts, verifier, hashes |
 | OpenClaw portable adapter | Supported | Local JSON CLI, Skill eligibility, boundary/workspace/verifier evidence |
 | Hermes/custom portable driver | Supported contract | Strict JSON driver; native/live Hermes validation is not claimed |
@@ -274,7 +291,26 @@ barena evaluate skill ./my-skill \
   --live-policy ./live-policy.json
 ```
 
-This command starts model execution only when the installed XiaobaOS runtime proves Barena's live safety contract. Stock XiaobaOS 0.2.0 currently returns a held result before paid execution; use the portable offline example below to verify the installable Barena path without credentials.
+This command starts model execution only when the installed XiaobaOS runtime proves Barena's live safety contract. An unpatched released XiaobaOS 0.2.0 returns a held result before paid execution; use the portable offline example below to verify the installable Barena path without credentials.
+
+For a subscription-backed XiaobaOS provider, copy the packaged policy template, set the provider environment variables, replace every `REPLACE_*` value with current verifiable data, set `hard_limit.verified=true` only after checking that entitlement, and run preflight before allowing either arm to call the model:
+
+```bash
+cp ./examples/xiaoba-subscription-live-policy.template.json ./live-policy.json
+
+export XIAOBA_LLM_API_KEY='<credential>'
+export XIAOBA_LLM_API_BASE='https://your-provider.example/v1'
+
+barena evaluate skill ./my-skill \
+  --target xiaobaos \
+  --role engineer-cat \
+  --case ./xiaoba-native-case.json \
+  --attempts 1 \
+  --live-policy ./live-policy.json \
+  --preflight-only
+```
+
+`billing_mode=subscription` uses zero-dollar accounting because no per-token price is claimed; it still requires recent entitlement evidence plus enforced call, input-token, output-token, provider/model, telemetry, and zero-retry bounds. Metered API users must instead provide positive sourced token prices and a verified provider-side hard limit. Barena persists environment-variable names and redacted evidence, never the credential value.
 
 `xiaobaos` is the recommended public target name; `xiaoba` remains a compatibility alias, and the executable remains `xiaoba`. The bundled SkillsBench-derived calibration pack can use the same native path with `--case-pack calibration/skillsbench/dialogue-graph-mini/case-pack.json`. It is a **SkillsBench-derived Barena calibration**, not an official SkillsBench or BenchFlow result.
 

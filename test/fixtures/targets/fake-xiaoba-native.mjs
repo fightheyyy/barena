@@ -376,6 +376,7 @@ function executeArenaRun(flags) {
   const providerCallRecords = buildProviderCallRecords({
     behavior,
     callContext,
+    maxTurns: numberFlag(flags, "max-turns", 4),
     provider: process.env.XIAOBA_LLM_PROVIDER || "fake-provider",
     model: process.env.XIAOBA_LLM_MODEL || "fake-model",
     outputLimit: positiveEnvironmentInteger("XIAOBA_LLM_MAX_TOKENS", 100),
@@ -556,7 +557,10 @@ function shouldCreateResult({ prompt, mode, targetRole, behavior }) {
 }
 
 function isDialogueGraphTask(prompt) {
-  return prompt.includes("Implement a dialogue parser") && prompt.includes("dialogue.json");
+  return prompt.includes("script.txt") && (
+    (prompt.includes("Convert the branching narrative") && prompt.includes("dialogue.json")) ||
+    prompt.includes("something my game can load")
+  );
 }
 
 function writeDialogueGraphArtifacts(workspaceRoot) {
@@ -586,7 +590,6 @@ function writeDialogueGraphArtifacts(workspaceRoot) {
     nodes.push({ id, text: match[2], speaker: match[1], type: "line" });
     edges.push({ from: id, to: match[3], text: "" });
   }
-  fs.writeFileSync(path.join(workspaceRoot, "solution.py"), "def parse_script(text: str):\n    return {'nodes': [], 'edges': []}\n", "utf8");
   writeJson(path.join(workspaceRoot, "dialogue.json"), { nodes, edges });
 }
 
@@ -674,6 +677,7 @@ function providerCallContext(flags, runId, mode) {
 function buildProviderCallRecords({
   behavior,
   callContext,
+  maxTurns,
   provider,
   model,
   outputLimit,
@@ -683,7 +687,7 @@ function buildProviderCallRecords({
 }) {
   const components = behavior === "missing_evaluator_telemetry"
     ? ["target"]
-    : ["target", "usercat", "replay"];
+    : ["target", ...(maxTurns > 1 ? ["usercat"] : []), "replay"];
   const records = components.map((component, index) => {
     const inputTokens = index + 1;
     const outputTokens = behavior === "per_call_token_overrun" && component === "target"

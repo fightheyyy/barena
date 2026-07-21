@@ -176,10 +176,15 @@ export type XiaoBaHardLimitMode =
   | "provider_project_limit"
   | "api_key_limit"
   | "metering_proxy"
-  | "prepaid_balance";
+  | "prepaid_balance"
+  | "subscription_entitlement";
+
+export type XiaoBaBillingMode = "metered" | "subscription";
 
 export interface XiaoBaLivePolicyV1 {
   schema: "barena.live_policy.v1";
+  /** Defaults to metered for policies written before subscription support. */
+  billing_mode?: XiaoBaBillingMode;
   provider: string;
   model: string;
   credential_env: string;
@@ -234,11 +239,11 @@ export interface XiaoBaLiveRuntimeContractV1 {
   composite_call_contract: "barena.xiaoba_composite_calls.v1";
   provider_call_record_schema: "barena.provider_call.v1";
   bounds: {
-    target_calls_per_turn: 1;
-    usercat_calls_per_turn: 1;
+    target_calls_per_turn: number;
+    usercat_calls_per_turn: number;
     inspector_calls_per_attempt: 0;
     reviewer_calls_per_attempt: 0;
-    replay_calls_per_case_turn: 1;
+    replay_calls_per_case_turn: number;
   };
   enforcement: {
     input_token_limit: true;
@@ -287,6 +292,7 @@ export interface XiaoBaProviderIdentityEvidence {
 }
 
 export interface XiaoBaBudgetEvidence {
+  billing_mode: XiaoBaBillingMode;
   budget_usd: number;
   declared_worst_case_usd: number;
   calculated_worst_case_usd: number;

@@ -6,9 +6,9 @@ The product category remains frozen in [`docs/POSITIONING.md`](POSITIONING.md): 
 
 Barena now has first-party XiaobaOS 0.1.1 and 0.2.0 native Role/Skill release paths, a built-in OpenClaw portable adapter, and a strict JSON driver contract for Hermes/custom CLI agents. The portable profile clears only from complete Barena boundary/workspace/verifier/session evidence, never starts a XiaobaOS evaluator process, never claims native/evaluator traces, and caps confidence at medium.
 
-The SkillsBench-derived case-source layer is implemented on the XiaobaOS native path. It pins upstream revision/task hashes, records adaptations, preserves prompt fidelity, and adds trusted structured-JSON verification without claiming BenchFlow/Docker runtime compatibility.
+The SkillsBench-derived case-source layer is implemented on the XiaobaOS native path. It pins upstream revision/task hashes, records adaptations, preserves prompt fidelity, and adds trusted structured-JSON verification without claiming BenchFlow/Docker runtime compatibility. The XiaobaOS validation pack now projects the same pinned `dialogue-parser` task into an explicit-spec fixed replay case and a low-information UserCat E2E boundary case with one shared hidden graph oracle. The executable parser and Graphviz requirements are explicit omissions because Barena does not execute subject-authored verifier code in this calibration. Deterministic contract coverage proves the projection and paired evaluation plumbing. A local additive XiaobaOS audit contract now passes live preflight and reached the real provider boundary; the persisted smoke stopped fail-closed on expired OAuth before the candidate arm, so no live effectiveness lift is claimed.
 
-The canonical core evaluation DAG is visible in the README, repository SPEC, and interactive TUI. It separates XiaobaOS native evidence from portable boundary evidence, then joins the selected profile with Barena's artifact verifier before paired aggregation and the final release gate.
+The product evaluation DAG is visible in the README and repository SPEC. The interactive TUI retains the complementary execution map: it separates XiaobaOS native evidence from portable boundary evidence, then joins the selected profile with Barena's artifact verifier before paired aggregation and the final release gate.
 
 The native and portable paths remain distinct. XiaobaOS native evaluation does not pass through `TargetAdapter`; versions 0.1.1 and 0.2.0 use XiaobaOS-owned UserCat/Inspector/Reviewer pipeline stages and only the target emits native AgentSession traces. Portable evaluation uses `TargetAdapter` plus Barena's deterministic verifier, marks evaluator stages `not_applicable`, and caps boundary-only confidence at medium. Neither path substitutes or fabricates native evaluator evidence.
 
@@ -69,6 +69,9 @@ The completed onboarding P0 adds project-scoped `barena init`, target-aware prov
 - [ ] Add cross-version regression comparison and flake reporting.
 - [x] Add `barena.xiaoba_case_pack.v1` with SkillsBench source provenance and fail-closed compatibility checks.
 - [x] Add trusted structured-JSON artifact assertions and a SkillsBench-derived dialogue-graph calibration fixture.
+- [x] Add a two-lane XiaobaOS validation pack that maps one pinned SkillsBench task to fixed replay and UserCat Agent E2E cases without duplicating task provenance.
+- [x] Implement and test an additive XiaobaOS live audit contract locally, including provider/model pinning, physical-call telemetry, token/retry limits, macOS sandbox compatibility, and fail-closed cleanup.
+- [x] Add subscription-entitlement live policies with zero-dollar accounting and hard call/token/retry enforcement instead of inventing per-token prices.
 - [x] Preserve byte-identical baseline/candidate task prompts without Skill-name treatment cues.
 - [x] Support exact XiaobaOS native contracts 0.1.1 and 0.2.0 with `xiaobaos` public CLI aliases and stable legacy wire identifiers.
 - [x] Implement `portable_verifier` orchestration with `boundary_verified` evidence, no evaluator traces, and confidence capped at medium.
@@ -82,10 +85,11 @@ The completed onboarding P0 adds project-scoped `barena init`, target-aware prov
 
 ## Next Steps
 
-1. Publish Barena 0.1.0 with the portable verifier path and the stock-XiaobaOS live limitation stated explicitly.
-2. Add the physical provider-call safety contract in XiaobaOS under a separately reviewed cross-repository change, then publish a repeated model-backed calibration report.
-3. Smoke a real local OpenClaw binary and a real Hermes wrapper before making live-runtime claims for those targets.
-4. Add cross-version comparison and flake reporting without weakening the paired case contract.
+1. Publish Barena 0.1.0 with the portable verifier path, SkillsBench-derived validation pack, and released-XiaobaOS live limitation stated explicitly.
+2. Refresh the local provider authorization, run the complete SkillsBench baseline/candidate manifest, and publish the sanitized persisted report.
+3. Review and release the additive physical provider-call safety contract in XiaobaOS so the live path is available without a local patch.
+4. Smoke a real local OpenClaw binary and a real Hermes wrapper before making live-runtime claims for those targets.
+5. Add cross-version comparison and flake reporting without weakening the paired case contract.
 
 ## Owners
 
@@ -180,12 +184,14 @@ The completed onboarding P0 adds project-scoped `barena init`, target-aware prov
 - 2026-07-19: At that checkpoint, `npm run check` passed all 162 tests then present and `npm run pack:dry-run` listed 243 package files. A real TTY smoke reviewed the effective OpenClaw case and 2+2 sessions, then cancelled with no writes. The globally linked CLI resolved to this checkout, `barena --version` returned `0.1.0`, `barena --help` led with the guide, non-TTY `barena guide` exited `3`, and non-TTY zero-argument `barena` printed help with exit `0`.
 - 2026-07-19: Reworked `barena tui` from a code-shaped evidence menu into an intent-led keyboard workflow. It now supports XiaobaOS Skill/Role, OpenClaw, and Hermes/custom portable drivers; fits normal screens within 24 rows; discloses total sessions and evidence profile; requires `y` after a dedicated cost boundary; and returns validation/runtime failures to the relevant step without discarding inputs.
 - 2026-07-20: Open-source release hardening added Apache-2.0 packaging, Node 18/current-LTS CI, contribution and private vulnerability-reporting guidance, packaged README assets, and precise exclusions for local SuperDev/audit files. Personal absolute-path and high-confidence credential scans returned no matches; `npm audit --omit=dev` reported zero vulnerabilities.
-- 2026-07-20: Corrected the future live-contract simulator so deterministic Inspector and internal Reviewer/replay stages no longer fabricate provider calls. Stock XiaobaOS 0.2.0 still fails closed before paid execution because `arena live-contract --json` is unavailable; the real native structural probe remains ready.
+- 2026-07-20: Corrected the future live-contract simulator so deterministic Inspector and internal Reviewer/replay stages no longer fabricate provider calls. Released XiaobaOS 0.2.0 still failed closed before paid execution because `arena live-contract --json` was unavailable; the real native structural probe remained ready.
 - 2026-07-20: Final local release-candidate gates passed on both declared compatibility edges: Node 18.20.8 completed 166/166 tests and Node 25.9.0 `npm run check` completed 166/166. The release fixed Node 18 immutable-snapshot cleanup by restoring owner permissions only on real directories inside Barena-owned scratch, skipping symlinks, and retaining fail-closed deletion verification; readonly-tree and external-symlink regression tests cover the boundary. The physical-call smoke also passed 10/10 additional serial repetitions.
 - 2026-07-20: The final 245-file package passed prepack, installed into an empty consumer, and completed version/help, portable probe, and two-attempt offline E2E with `cleared/pass`, `boundary_verified`, and medium confidence. Real guide/TUI TTY cancellation, non-TTY exit codes, global-link version, `npm audit --omit=dev`, credential/absolute-path scans, `git diff --check`, and package-content checks also passed.
 - 2026-07-20: Added strict project-scoped `.barena/config.json`, `barena init`, `barena config show/path`, config-backed `barena eval`, and target-aware `barena doctor`. Provider credentials remain target-owned: Barena persists and reports environment-variable names only, passes only allowlisted names, and never serializes their values.
 - 2026-07-20: Added `barena list suites` and `skillsbench:starter`, materializing the pinned one-task SkillsBench-derived calibration for XiaobaOS native, OpenClaw, and portable JSON drivers. Portable cases now reuse trusted structured JSON/graph verification; the suite remains explicitly unofficial and is not presented as a full SkillsBench score.
 - 2026-07-20: Node 25.9.0 `npm run check` and a direct Node 18.20.8 build/test both passed 169/169 tests. A freshly packed `barena@0.1.0` tarball installed in an empty consumer, loaded the bundled suite, initialized and diagnosed a Hermes-compatible driver from project config, and completed the packaged two-attempt offline E2E with `cleared/pass`.
+- 2026-07-21: Added the SkillsBench-derived XiaobaOS validation manifest with explicit-spec fixed replay and low-information UserCat E2E cases sharing the pinned `dialogue-parser` task, fixture, Skill, and structured graph oracle. The loader permits multiple unique projections of one upstream task only when their source path and verified hash agree, while deduplicating persisted `task_ids`. The executable parser and Graphviz requirements are recorded omissions; no subject-authored verifier code is executed. Credential-free verification confirmed XiaobaOS 0.2.0 structural readiness and the expected `arena live-contract --json` blocker; no model call was started.
+- 2026-07-21: Added a local XiaobaOS `arena live-contract --json` audit seam, physical provider-call telemetry, provider/model and token/retry enforcement, macOS Seatbelt path handling, and guaranteed scratch cleanup. Barena added runtime-declared call planning and subscription-entitlement policies. Full Barena regression passed 175/175 tests; XiaobaOS full regression passed. A persisted real smoke (`xiaoba-skill-eval-20260721100935-f06681`) reached the baseline provider request and stopped on `PROVIDER_AUTH_ERROR` 401; the target trace reported `0/0` tokens, billing usage was unavailable, and no retry occurred. Redaction and cleanup passed and the candidate arm did not start.
 
 ## Risks / Open Questions
 
@@ -201,7 +207,7 @@ The completed onboarding P0 adds project-scoped `barena init`, target-aware prov
 - XiaobaOS native Arena is a composite CLI contract, not a single target call. Treating it as a `TargetAdapter` would lose evaluator/target/replay/scorecard semantics.
 - XiaobaOS Role snapshots currently resolve installed Role identities; arbitrary Role-directory execution may not be supported and must remain blocked unless the CLI contract proves it.
 - Native Arena output is retained inside each Barena attempt and every accepted boundary/native/evaluator/verifier/debug ref is copied and hash-stamped before a complete result can clear.
-- Stock XiaobaOS 0.2.0 does not expose Barena's live safety capability/telemetry contract. Native structural compatibility is ready, but paid/live evaluation must remain `held/live_runtime_contract_unsupported` until the runtime adds that boundary.
+- Released XiaobaOS 0.2.0 does not expose Barena's live safety capability/telemetry contract. Native structural compatibility is ready, and the boundary is implemented on a local additive patch, but unpatched installs must remain `held/live_runtime_contract_unsupported` until XiaobaOS publishes it.
 
 ## Status Maintenance Rules
 

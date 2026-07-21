@@ -292,6 +292,29 @@ test("structured redaction handles camelCase secrets without erasing contract-cr
   assert.equal(retained.setCookie, "[REDACTED]");
 });
 
+test("structured redaction sanitizes secret assignments embedded inside JSON strings", () => {
+  const root = tempRoot("barena-embedded-secret-assignment-");
+  const destination = path.join(root, "retained.json");
+  const context: EvidenceRedactionContext = {
+    profile: "test",
+    secrets: [
+      { env_name: "XIAOBA_LLM_API_KEY", value: "live-secret-value" },
+      { env_name: "XIAOBA_LLM_API_BASE", value: "https://provider.invalid/v1" },
+    ],
+  };
+
+  writeSanitizedJson(destination, {
+    command: 'XIAOBA_LLM_API_KEY="${XIAOBA_LLM_API_KEY}" XIAOBA_LLM_API_BASE="${XIAOBA_LLM_API_BASE}" node worker.js',
+  }, context);
+
+  const retained = fs.readFileSync(destination, "utf8");
+  assert.equal(retained.includes("live-secret-value"), false);
+  assert.equal(retained.includes('XIAOBA_LLM_API_KEY=\\"${XIAOBA_LLM_API_KEY}'), false);
+  assert.equal(retained.includes('XIAOBA_LLM_API_BASE=\\"${XIAOBA_LLM_API_BASE}'), false);
+  assert.match(retained, /\[REDACTED\]/);
+  assert.equal(scanRetainedTreeForSecrets(root, context).status, "pass");
+});
+
 test("provider identity claims are revalidated from sanitized retained evidence", async () => {
   const fixture = makeNativeFixture("barena-sanitized-claims-");
   const request = minimalLiveRequest(fixture);

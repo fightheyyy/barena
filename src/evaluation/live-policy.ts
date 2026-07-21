@@ -24,7 +24,9 @@ const HARD_LIMIT_MODES = new Set([
   "api_key_limit",
   "metering_proxy",
   "prepaid_balance",
+  "subscription_entitlement",
 ]);
+const BILLING_MODES = new Set(["metered", "subscription"]);
 const PROVIDER_CALL_COMPONENTS: XiaoBaProviderCallComponent[] = [
   "target",
   "usercat",
@@ -119,6 +121,15 @@ export function validateXiaoBaLivePolicy(value: unknown): XiaoBaLivePolicyV1 {
     throw new XiaoBaLivePolicyValidationError("live policy schema must be barena.live_policy.v1");
   }
 
+  const billingMode = policy.billing_mode === undefined
+    ? "metered"
+    : requiredString(policy.billing_mode, "live policy billing_mode");
+  if (!BILLING_MODES.has(billingMode)) {
+    throw new XiaoBaLivePolicyValidationError(
+      `live policy billing_mode must be one of ${[...BILLING_MODES].join(", ")}`
+    );
+  }
+
   const provider = requiredString(policy.provider, "live policy provider");
   const model = requiredString(policy.model, "live policy model");
   const credentialEnv = envName(policy.credential_env, "live policy credential_env");
@@ -132,11 +143,17 @@ export function validateXiaoBaLivePolicy(value: unknown): XiaoBaLivePolicyV1 {
   const pricingModel = requiredString(pricingValue.model, "live policy pricing.model");
   const pricingApiBaseEnv = envName(pricingValue.api_base_env, "live policy pricing.api_base_env");
   const pricingCurrency = usd(pricingValue.currency, "live policy pricing.currency");
-  const inputPrice = positiveNumber(
+  const inputPrice = billingMode === "subscription" ? nonNegativeNumber(
+    pricingValue.input_usd_per_million_tokens,
+    "live policy pricing.input_usd_per_million_tokens"
+  ) : positiveNumber(
     pricingValue.input_usd_per_million_tokens,
     "live policy pricing.input_usd_per_million_tokens"
   );
-  const outputPrice = positiveNumber(
+  const outputPrice = billingMode === "subscription" ? nonNegativeNumber(
+    pricingValue.output_usd_per_million_tokens,
+    "live policy pricing.output_usd_per_million_tokens"
+  ) : positiveNumber(
     pricingValue.output_usd_per_million_tokens,
     "live policy pricing.output_usd_per_million_tokens"
   );
@@ -148,13 +165,17 @@ export function validateXiaoBaLivePolicy(value: unknown): XiaoBaLivePolicyV1 {
     );
   }
 
-  const budgetUsd = positiveNumber(policy.budget_usd, "live policy budget_usd");
+  const budgetUsd = billingMode === "subscription"
+    ? nonNegativeNumber(policy.budget_usd, "live policy budget_usd")
+    : positiveNumber(policy.budget_usd, "live policy budget_usd");
   if (budgetUsd > MAX_PRIVATE_BETA_BUDGET_USD) {
     throw new XiaoBaLivePolicyValidationError(
       `live policy budget_usd must be at most ${MAX_PRIVATE_BETA_BUDGET_USD}`
     );
   }
-  const worstCaseUsd = positiveNumber(policy.worst_case_usd, "live policy worst_case_usd");
+  const worstCaseUsd = billingMode === "subscription"
+    ? nonNegativeNumber(policy.worst_case_usd, "live policy worst_case_usd")
+    : positiveNumber(policy.worst_case_usd, "live policy worst_case_usd");
 
   const hardLimitValue = record(policy.hard_limit, "live policy hard_limit");
   const hardLimitMode = requiredString(hardLimitValue.mode, "live policy hard_limit.mode");
@@ -187,7 +208,9 @@ export function validateXiaoBaLivePolicy(value: unknown): XiaoBaLivePolicyV1 {
     "live policy hard_limit.api_base_env"
   );
   const hardLimitCurrency = usd(hardLimitValue.currency, "live policy hard_limit.currency");
-  const hardLimitCapUsd = positiveNumber(hardLimitValue.cap_usd, "live policy hard_limit.cap_usd");
+  const hardLimitCapUsd = billingMode === "subscription"
+    ? nonNegativeNumber(hardLimitValue.cap_usd, "live policy hard_limit.cap_usd")
+    : positiveNumber(hardLimitValue.cap_usd, "live policy hard_limit.cap_usd");
   if (
     hardLimitProvider !== provider ||
     hardLimitCredentialEnv !== credentialEnv ||
@@ -195,6 +218,22 @@ export function validateXiaoBaLivePolicy(value: unknown): XiaoBaLivePolicyV1 {
   ) {
     throw new XiaoBaLivePolicyValidationError(
       "live policy hard_limit must bind the top-level provider, credential_env, and api_base_env"
+    );
+  }
+  if (billingMode === "subscription") {
+    if (inputPrice !== 0 || outputPrice !== 0 || budgetUsd !== 0 || worstCaseUsd !== 0 || hardLimitCapUsd !== 0) {
+      throw new XiaoBaLivePolicyValidationError(
+        "subscription live policy must use zero token prices, budget_usd, worst_case_usd, and hard_limit.cap_usd"
+      );
+    }
+    if (hardLimitMode !== "subscription_entitlement") {
+      throw new XiaoBaLivePolicyValidationError(
+        "subscription live policy hard_limit.mode must be subscription_entitlement"
+      );
+    }
+  } else if (hardLimitMode === "subscription_entitlement") {
+    throw new XiaoBaLivePolicyValidationError(
+      "metered live policy cannot use hard_limit.mode subscription_entitlement"
     );
   }
 
@@ -216,6 +255,7 @@ export function validateXiaoBaLivePolicy(value: unknown): XiaoBaLivePolicyV1 {
 
   return deepFreeze({
     schema: "barena.live_policy.v1",
+    billing_mode: billingMode as "metered" | "subscription",
     provider,
     model,
     credential_env: credentialEnv,
@@ -274,15 +314,12 @@ export function validateXiaoBaLiveRuntimeContract(value: unknown): XiaoBaLiveRun
   }
   const bounds = record(contract.bounds, "XiaobaOS live runtime contract bounds");
   const enforcement = record(contract.enforcement, "XiaobaOS live runtime contract enforcement");
-  for (const [name, expected] of [
-    ["target_calls_per_turn", 1],
-    ["usercat_calls_per_turn", 1],
-    ["inspector_calls_per_attempt", 0],
-    ["reviewer_calls_per_attempt", 0],
-    ["replay_calls_per_case_turn", 1],
-  ] as const) {
-    if (bounds[name] !== expected) {
-      throw new XiaoBaLivePolicyValidationError(`XiaobaOS live runtime contract bounds.${name} must be ${expected}`);
+  const targetCallsPerTurn = boundedPositiveInteger(bounds.target_calls_per_turn, "XiaobaOS live runtime contract bounds.target_calls_per_turn", 32);
+  const usercatCallsPerTurn = boundedPositiveInteger(bounds.usercat_calls_per_turn, "XiaobaOS live runtime contract bounds.usercat_calls_per_turn", 4);
+  const replayCallsPerCaseTurn = boundedPositiveInteger(bounds.replay_calls_per_case_turn, "XiaobaOS live runtime contract bounds.replay_calls_per_case_turn", 32);
+  for (const name of ["inspector_calls_per_attempt", "reviewer_calls_per_attempt"] as const) {
+    if (bounds[name] !== 0) {
+      throw new XiaoBaLivePolicyValidationError(`XiaobaOS live runtime contract bounds.${name} must be 0`);
     }
   }
   if (
@@ -301,11 +338,11 @@ export function validateXiaoBaLiveRuntimeContract(value: unknown): XiaoBaLiveRun
     composite_call_contract: "barena.xiaoba_composite_calls.v1",
     provider_call_record_schema: "barena.provider_call.v1",
     bounds: {
-      target_calls_per_turn: 1,
-      usercat_calls_per_turn: 1,
+      target_calls_per_turn: targetCallsPerTurn,
+      usercat_calls_per_turn: usercatCallsPerTurn,
       inspector_calls_per_attempt: 0,
       reviewer_calls_per_attempt: 0,
-      replay_calls_per_case_turn: 1,
+      replay_calls_per_case_turn: replayCallsPerCaseTurn,
     },
     enforcement: {
       input_token_limit: true,
@@ -324,7 +361,15 @@ export function evaluateXiaoBaLivePreflight(
   const binding = validateXiaoBaLivePolicyBinding(input.binding);
   const policy = binding.policy;
   const now = input.now ?? new Date();
-  const callPlan = calculateProviderCallPlan(input.request);
+  let runtimeContract: XiaoBaLiveRuntimeContractV1 | undefined;
+  try {
+    runtimeContract = input.runtime_contract
+      ? validateXiaoBaLiveRuntimeContract(input.runtime_contract)
+      : undefined;
+  } catch {
+    runtimeContract = undefined;
+  }
+  const callPlan = calculateProviderCallPlan(input.request, runtimeContract);
   const plannedBarenaAttempts = input.request.cases.length * input.request.attempts_per_arm * 2;
   const plannedProviderCalls = Object.values(callPlan).reduce((sum, value) => sum + value, 0);
   const calculatedWorstCaseUsd = calculateWorstCaseUsd(policy, plannedProviderCalls);
@@ -339,14 +384,6 @@ export function evaluateXiaoBaLivePreflight(
   const apiBasePresent = nonEmptyEnvironmentValue(input.environment[policy.api_base_env]);
   const pricingFreshness = freshness(policy.pricing.sourced_at, now, PRICING_MAX_AGE_MS);
   const hardLimitFreshness = freshness(policy.hard_limit.verified_at, now, HARD_LIMIT_MAX_AGE_MS);
-  let runtimeContract: XiaoBaLiveRuntimeContractV1 | undefined;
-  try {
-    runtimeContract = input.runtime_contract
-      ? validateXiaoBaLiveRuntimeContract(input.runtime_contract)
-      : undefined;
-  } catch {
-    runtimeContract = undefined;
-  }
   const runtimeContractVerified = Boolean(runtimeContract);
   const retryControlVerified = runtimeContract?.enforcement.sdk_max_retries === 0;
   const providerTelemetryVerified = runtimeContract?.enforcement.authoritative_per_call_telemetry === true &&
@@ -448,7 +485,9 @@ export function evaluateXiaoBaLivePreflight(
   ));
 
   let reasonCode: XiaoBaNativeReasonCode | undefined;
-  let summary = "Bound live policy, runtime contract, budget, identity, retry, and telemetry checks are ready.";
+  let summary = policy.billing_mode === "subscription"
+    ? "Bound subscription policy, runtime call/token limits, identity, retry, and telemetry checks are ready."
+    : "Bound live policy, runtime contract, budget, identity, retry, and telemetry checks are ready.";
   if (!credentialPresent || !apiBasePresent) {
     reasonCode = "xiaoba_provider_unconfigured";
     summary = "Live provider credential or API base configuration is missing.";
@@ -517,6 +556,7 @@ export function evaluateXiaoBaLivePreflight(
       api_base_present: apiBasePresent,
     },
     budget: {
+      billing_mode: policy.billing_mode ?? "metered",
       budget_usd: policy.budget_usd,
       declared_worst_case_usd: policy.worst_case_usd,
       calculated_worst_case_usd: calculatedWorstCaseUsd,
@@ -549,8 +589,16 @@ export function evaluateXiaoBaLivePreflight(
 }
 
 export function calculateProviderCallPlan(
-  request: XiaoBaCapabilityEvaluationRequestV1
+  request: XiaoBaCapabilityEvaluationRequestV1,
+  runtimeContract?: XiaoBaLiveRuntimeContractV1,
 ): Record<XiaoBaProviderCallComponent, number> {
+  const bounds = runtimeContract?.bounds ?? {
+    target_calls_per_turn: 1,
+    usercat_calls_per_turn: 1,
+    inspector_calls_per_attempt: 0,
+    reviewer_calls_per_attempt: 0,
+    replay_calls_per_case_turn: 1,
+  };
   const totals: Record<XiaoBaProviderCallComponent, number> = {
     target: 0,
     usercat: 0,
@@ -563,9 +611,13 @@ export function calculateProviderCallPlan(
     const replayAttempts = item.replay_attempts ?? 1;
     const maxReplayCases = item.max_replay_cases ?? 1;
     const barenaAttempts = request.attempts_per_arm * 2;
-    totals.target += maxTurns * barenaAttempts;
-    totals.usercat += maxTurns * barenaAttempts;
-    totals.replay += replayAttempts * maxReplayCases * maxTurns * barenaAttempts;
+    totals.target += maxTurns * bounds.target_calls_per_turn * barenaAttempts;
+    // The opening user message is case-authored. UserCat only invokes its
+    // planner after observing a target response to choose a follow-up.
+    totals.usercat += Math.max(0, maxTurns - 1) * bounds.usercat_calls_per_turn * barenaAttempts;
+    totals.inspector += bounds.inspector_calls_per_attempt * barenaAttempts;
+    totals.reviewer += bounds.reviewer_calls_per_attempt * barenaAttempts;
+    totals.replay += replayAttempts * maxReplayCases * maxTurns * bounds.replay_calls_per_case_turn * barenaAttempts;
   }
   return totals;
 }
@@ -574,6 +626,7 @@ export function calculateWorstCaseUsd(
   policy: XiaoBaLivePolicyV1,
   providerCalls = policy.max_provider_calls
 ): number {
+  if (policy.billing_mode === "subscription") return 0;
   const perCall = (
     policy.max_input_tokens * policy.pricing.input_usd_per_million_tokens +
     policy.max_output_tokens * policy.pricing.output_usd_per_million_tokens
@@ -586,6 +639,7 @@ export function estimatedUsageCostUsd(
   outputTokens: number,
   policy: XiaoBaLivePolicyV1
 ): number {
+  if (policy.billing_mode === "subscription") return 0;
   return roundUsd((
     inputTokens * policy.pricing.input_usd_per_million_tokens +
     outputTokens * policy.pricing.output_usd_per_million_tokens
@@ -704,11 +758,27 @@ function positiveInteger(value: unknown, label: string): number {
   return value;
 }
 
+function boundedPositiveInteger(value: unknown, label: string, maximum: number): number {
+  const parsed = positiveInteger(value, label);
+  if (parsed > maximum) {
+    throw new XiaoBaLivePolicyValidationError(`${label} must be at most ${maximum}`);
+  }
+  return parsed;
+}
+
 function positiveNumber(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     throw new XiaoBaLivePolicyValidationError(`${label} must be a positive finite number`);
   }
   return value;
+}
+
+function nonNegativeNumber(value: unknown, label: string): number {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) {
+    throw new XiaoBaLivePolicyValidationError(`${label} must be a non-negative finite number`);
+  }
+  return number;
 }
 
 function uniqueStringArray(value: unknown, label: string): string[] {

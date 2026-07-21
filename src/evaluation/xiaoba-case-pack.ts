@@ -48,6 +48,7 @@ export function loadXiaoBaCasePack(manifestPath: string): LoadedXiaoBaCasePack {
 
   const caseIds = new Set<string>();
   const taskIds = new Set<string>();
+  const taskSources = new Map<string, { task_path: string; task_sha256: string }>();
   const cases = manifest.cases.map((entry, index) => {
     const casePath = resolvePackFile(packRoot, entry.case_path, `cases[${index}].case_path`);
     const taskPath = resolvePackFile(packRoot, entry.source_task.task_path, `cases[${index}].source_task.task_path`);
@@ -60,9 +61,19 @@ export function loadXiaoBaCasePack(manifestPath: string): LoadedXiaoBaCasePack {
     const loaded = loadXiaoBaNativeCase(casePath);
     if (loaded.source !== undefined) throw new Error(`Case ${loaded.case_id} must not define source outside its case pack`);
     if (caseIds.has(loaded.case_id)) throw new Error(`Duplicate case_id in case pack: ${loaded.case_id}`);
-    if (taskIds.has(entry.source_task.task_id)) throw new Error(`Duplicate SkillsBench task_id in case pack: ${entry.source_task.task_id}`);
+    const existingTaskSource = taskSources.get(entry.source_task.task_id);
+    if (existingTaskSource && (
+      existingTaskSource.task_path !== entry.source_task.task_path
+      || existingTaskSource.task_sha256 !== taskSha256
+    )) {
+      throw new Error(`Conflicting SkillsBench source provenance for task_id: ${entry.source_task.task_id}`);
+    }
     caseIds.add(loaded.case_id);
     taskIds.add(entry.source_task.task_id);
+    taskSources.set(entry.source_task.task_id, {
+      task_path: entry.source_task.task_path,
+      task_sha256: taskSha256,
+    });
 
     const source: XiaoBaCaseSourceProvenance = {
       kind: "skillsbench",

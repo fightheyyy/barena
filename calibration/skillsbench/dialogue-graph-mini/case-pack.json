@@ -22,7 +22,7 @@
         "notes": [
           "Reduced the upstream dialogue fixture to a deterministic local calibration graph.",
           "Rewrote /app absolute paths to workspace-relative paths.",
-          "Omitted Graphviz output and retained the JSON graph outcome.",
+          "Omitted the executable solution.py parser and Graphviz output; retained only the declaratively verifiable JSON graph outcome.",
           "Replaced the upstream Python verifier with trusted declarative Barena checks."
         ]
       }

@@ -55,73 +55,42 @@ Out of scope for this MVP:
 
 ## Core Evaluation DAG
 
-This is the canonical reader map for Barena. Both native and portable paths preserve the same release flow while retaining different evidence profiles.
+This is the canonical product map for Barena. It starts with the problem created by continuous Harness evolution, separates known-regression replay from unknown-boundary exploration, and converges both lanes on persisted evidence and an auditable release decision.
 
 ```mermaid
 flowchart LR
-    subgraph Input["1) Release Change"]
-        direction TB
-        Cases["E2E cases"]
-        Baseline["baseline<br/>Role or Skill"]
-        Candidate["candidate<br/>Role or Skill"]
-    end
+    Change["Agent Harness keeps evolving<br/>baseline → candidate<br/>model / prompt / Skill / tool / runtime"]
+    Risk["Behavior changes are unpredictable<br/>capabilities may improve or regress"]
+    Known["Did we break<br/>a known capability?"]
+    Unknown["What boundary will<br/>a real user hit next?"]
+    Replay["Fixed-case replay<br/>reproduce and protect known behavior"]
+    E2E["UserCat Agent E2E<br/>explore unknown behavioral boundaries"]
+    Evidence["Real execution evidence<br/>trace + artifact + verifier"]
+    Review["Inspector + Reviewer<br/>analyze lift, regressions, and root causes"]
+    Decision["Auditable evolution decision<br/>cleared / held / rejected"]
+    NewCase["Discovered issue<br/>next replay-case candidate"]
 
-    subgraph Orchestrator["2) Barena Orchestrator"]
-        direction TB
-        Preflight["fail-closed preflight<br/>blocked means held"]
-        BaseRuns["fresh baseline attempts"]
-        CandidateRuns["fresh candidate attempts"]
-        Preflight --> BaseRuns
-        Preflight --> CandidateRuns
-    end
-
-    subgraph Runtime["3) Runtime Profile"]
-        direction TB
-        Native["XiaobaOS native Arena<br/>native trace + stages"]
-        Portable["portable target driver<br/>boundary observation"]
-        Artifacts["artifacts + final state"]
-        Native --> Artifacts
-        Portable --> Artifacts
-    end
-
-    subgraph Evidence["4) Barena Evidence"]
-        direction TB
-        RuntimeEvidence["native or boundary evidence<br/>profile stays explicit"]
-        Verifier["artifact verifier"]
-        Package["validated + hash-stamped<br/>evidence package"]
-        RuntimeEvidence --> Package
-        Verifier --> Package
-    end
-
-    subgraph Gate["5) Paired Release Gate"]
-        direction TB
-        Aggregate["truth + lift<br/>stability + regressions"]
-        Decision["cleared / held / rejected"]
-        Aggregate --> Decision
-    end
-
-    Cases --> Preflight
-    Baseline --> BaseRuns
-    Candidate --> CandidateRuns
-    BaseRuns --> Native
-    CandidateRuns --> Native
-    BaseRuns --> Portable
-    CandidateRuns --> Portable
-    Native --> RuntimeEvidence
-    Portable --> RuntimeEvidence
-    Artifacts --> Verifier
-    Package --> Aggregate
+    Change --> Risk
+    Risk --> Known
+    Risk --> Unknown
+    Known --> Replay
+    Unknown --> E2E
+    Replay --> Evidence
+    E2E --> Evidence
+    Evidence --> Review
+    Review --> Decision
+    Review --> NewCase
 ```
 
-The native path uses XiaobaOS trace and evaluator-stage evidence. The portable path uses only Barena-observed input, process, output, workspace, and verifier evidence. Barena validates and hash-stamps the available evidence package, then aggregates baseline/candidate attempts into effectiveness, stability, regression, and release decisions.
+The fixed replay lane protects known behavior with repeatable baseline/candidate cases. The Agent E2E lane lets UserCat probe incomplete and ambiguous user behavior to discover boundaries that the replay suite does not yet cover. Both lanes retain real execution evidence, and an Inspector-discovered issue becomes a candidate for a future replay suite rather than mutating the current run.
 
-`UserCat`, `InspectorCat`, and `ReviewerCat` are native XiaobaOS evaluator stages, not requirements for portable clearance. XiaobaOS 0.1.1 and 0.2.0 implement them as a composite native Arena pipeline rather than three independent evaluator `AgentSession`s; the result contract records that limitation explicitly. Portable scorecards mark these stages `not_applicable` and never fabricate evaluator traces.
+The first concrete validation pack maps a pinned SkillsBench `dialogue-parser` task into one explicit-spec fixed replay case and one low-information UserCat E2E case with the same hidden structured graph verifier. The executable parser and Graphviz requirements are recorded omissions, so the calibration never executes subject-authored verifier code or claims full upstream harness compatibility. `UserCat`, Inspector, and the internally named Reviewer stage remain XiaobaOS-native composite stages in v0.1, not three independent evaluator `AgentSession`s. Portable scorecards mark these stages `not_applicable` and never fabricate evaluator traces.
 
 ## Current Architecture
 
 The repository owns subject, scan, run, trace, replay, verifier, paired capability result, scorecard, report, CLI, and TUI contracts. XiaobaOS 0.1.1 and 0.2.0 are implemented first-party native targets through a dedicated composite Arena route. The native route accepts canonical cases directly or through a SkillsBench-derived case-pack projection with pinned provenance, prompt-fidelity checks, and trusted structured-JSON verification. OpenClaw now runs through the portable verifier with its built-in adapter; Hermes/custom CLI agents use the strict portable JSON driver. The original deterministic clearance path remains a legacy scaffold and is not equivalent to real XiaobaOS AgentSessions.
 
-Stock XiaobaOS 0.2.0 satisfies the native probe, manifest, snapshot, execution, and evidence-shape integration used by Barena, but it does not expose the credential-free `arena live-contract --json` capability or authoritative physical provider-call telemetry required for paid/live execution. Barena therefore fails closed with `live_runtime_contract_unsupported` before starting either arm. Tests that implement that additive live contract are future-contract simulators, not evidence that stock XiaobaOS is live-ready.
+Released XiaobaOS 0.2.0 satisfies the native probe, manifest, snapshot, execution, and evidence-shape integration used by Barena, but it does not yet ship the credential-free `arena live-contract --json` capability or authoritative physical provider-call telemetry required for paid/live execution. Barena therefore fails closed with `live_runtime_contract_unsupported` before starting either arm on an unpatched install. A local additive XiaobaOS audit-contract patch now implements and tests that boundary and has reached a real provider request through Barena; because it is not released, it is evidence for the integration seam rather than a stock-runtime compatibility claim.
 
 ```mermaid
 flowchart LR
@@ -180,7 +149,7 @@ flowchart LR
 
 Barena owns paired release orchestration, normalization, verification, evidence provenance, and the final release decision. XiaobaOS native Arena is a composite evaluation contract that already contains evaluator and target planes; it must not be forced into the single-target `TargetAdapter` interface. External agents use the portable verifier through a built-in adapter or the JSON driver contract.
 
-The target live architecture adds an explicit resource-safety boundary without changing the non-live native contracts. Barena owns policy and reservation; XiaobaOS must enforce limits before each physical provider request and emit authoritative per-attempt telemetry. Missing, stale, or mismatched capability/telemetry evidence remains a held result. Inspector is deterministic in the stock Arena and Reviewer is an internal replay/scoring stage, so neither is assumed to make a provider call; live accounting follows observed physical calls instead of assigning one synthetic call to every Arena stage.
+The live architecture adds an explicit resource-safety boundary without changing the non-live native contracts. Barena owns policy and reservation; XiaobaOS enforces limits before each physical provider request and emits authoritative per-attempt telemetry through the additive audit contract. Missing, stale, or mismatched capability/telemetry evidence remains a held result. Inspector is deterministic in the current Arena and Reviewer is an internal replay/scoring stage, so neither is assumed to make a provider call; live accounting follows observed physical calls instead of assigning one synthetic call to every Arena stage. Metered policies bind sourced token prices and a provider-side hard limit; subscription policies use zero-dollar accounting while still requiring a verified entitlement and hard call/token/retry bounds.
 
 ```mermaid
 flowchart LR
@@ -507,7 +476,7 @@ The explicit `barena tui` surface is the keyboard evaluation workspace for users
 - Barena must bind the XiaobaOS project root explicitly and copy/hash native evidence into the Barena run package so later TUI reads do not depend on mutable native run retention.
 - Barena may always observe its own inputs, process boundary, and workspace. Target-native traces are required when the native contract promises them, optional for external targets, and never inferred or fabricated.
 - Missing XiaobaOS support, roles, provider configuration, portable driver, target binary, target configuration, or protocol compatibility yields `blocked`, not a simulated pass.
-- Missing XiaobaOS live-contract support or authoritative provider-call evidence yields `held/live_runtime_contract_unsupported` before paid execution; fixture contracts never count as stock-runtime compatibility evidence.
+- Missing XiaobaOS live-contract support or authoritative provider-call evidence yields `held/live_runtime_contract_unsupported` before paid execution; local patches and fixture contracts never count as released-runtime compatibility evidence.
 - OpenClaw portable execution retains no-delivery, exact Skill allowlist, eligibility proof, unique-session, and `policy_only` constraints. It does not start a XiaobaOS evaluator process.
 - A selected Skill is considered injected only when the candidate workspace, explicit allowlist, and OpenClaw Skill eligibility preflight all identify the same Skill fingerprint.
 - A XiaobaOS Skill or Role is considered active only when the native snapshot/profile/trace evidence identifies the requested subject and fingerprint; subject selection alone is not proof of use or effectiveness.

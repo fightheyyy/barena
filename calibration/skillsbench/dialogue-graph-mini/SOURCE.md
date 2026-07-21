@@ -7,4 +7,4 @@ This calibration pack is derived from the Apache-2.0 SkillsBench `dialogue-parse
 - Upstream task prompt copy: `source/dialogue-parser-task.md`
 - Candidate Skill: adapted from `tasks/dialogue-parser/environment/skills/dialogue-graph/SKILL.md`
 
-This is not an official SkillsBench or BenchFlow result. Barena rewrites absolute paths to workspace-relative paths, reduces the fixture, omits Graphviz output, and uses its own trusted structured JSON verifier.
+This is not an official SkillsBench or BenchFlow result. Barena rewrites absolute paths to workspace-relative paths, reduces the fixture, omits the executable `solution.py` parser and Graphviz output, and retains only the JSON graph outcome that its trusted declarative verifier can check without executing subject-authored code.
