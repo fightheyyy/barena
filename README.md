@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="assets/hero.gif" alt="Barena — end-to-end testing and release CI for AI agents." width="100%" />
+<img src="assets/hero.gif" alt="Barena — E2E evaluation and release gates for Agent Harness Evolution." width="100%" />
 
 # Barena
 
-### End-to-end testing and release CI for AI agents
+### E2E evaluation and release gates for Agent Harness Evolution
 
 [![Barena](https://img.shields.io/badge/Barena-v0.1.0-6B7280.svg?labelColor=111827)](https://github.com/fightheyyy/barena)
 [![Agent E2E](https://img.shields.io/badge/AI_Agent-E2E_Testing-D4A72C.svg?labelColor=111827)](#how-it-works)
@@ -23,9 +23,11 @@
 
 ---
 
-> What if every agent release had to prove it could still complete real user tasks?
+> What if every Agent Harness change had to prove it could still complete real user tasks?
 
-Barena is an open-source end-to-end testing and release CI project for AI agents. It treats the agent system — model, prompt, skills, tools, memory, and runtime — as a black box, then evaluates observable behavior with clean runs, traces, artifacts, replay evidence, verifiers, and release decisions.
+Barena is an open-source E2E evaluation and release framework for Agent Harness Evolution. It treats the complete harness — model, prompt, Role, Skills, tools, memory, permissions, and runtime — as a black box, then evaluates each concrete change through clean baseline/candidate runs, traces, artifacts, replay evidence, verifiers, and release decisions.
+
+Here, **harness evolution** means versioned changes to the components that shape Agent behavior; it does not mean autonomous self-modification. Phase 1 makes Skill and Role changes first-class while preserving the same release model for future model, prompt, tool, memory-policy, and runtime changes.
 
 The authoritative product scope is locked in [`docs/POSITIONING.md`](docs/POSITIONING.md): Barena evaluates whether a concrete Agent change is effective, stable, regression-free, and ready to ship. Phase 1 combines native XiaobaOS Role/Skill release CI with a portable deterministic verifier for external CLI agents.
 
@@ -54,65 +56,49 @@ Every model swap, prompt edit, new skill, or tool change can introduce a silent 
 
 ```mermaid
 flowchart LR
-    subgraph Input["1) Release Change"]
-        direction TB
-        Cases["E2E cases"]
-        Baseline["baseline<br/>Role or Skill"]
-        Candidate["candidate<br/>Role or Skill"]
-    end
+    Change["Agent Harness keeps evolving<br/>baseline → candidate<br/>model / prompt / Skill / tool / runtime"]
 
-    subgraph Orchestrator["2) Barena Orchestrator"]
-        direction TB
-        Preflight["fail-closed preflight<br/>blocked means held"]
-        BaseRuns["fresh baseline attempts"]
-        CandidateRuns["fresh candidate attempts"]
-        Preflight --> BaseRuns
-        Preflight --> CandidateRuns
-    end
+    Risk["Behavior changes are unpredictable<br/>capabilities may improve or regress"]
 
-    subgraph Runtime["3) Runtime Profile"]
-        direction TB
-        Native["XiaobaOS native Arena<br/>native trace + stages"]
-        Portable["OpenClaw / JSON driver<br/>boundary observation"]
-        Artifacts["artifacts + final state"]
-        Native --> Artifacts
-        Portable --> Artifacts
-    end
+    Known["Did we break<br/>a known capability?"]
+    Unknown["What boundary will<br/>a real user hit next?"]
 
-    subgraph Evidence["4) Barena Evidence"]
-        direction TB
-        RuntimeEvidence["native or boundary evidence<br/>profile stays explicit"]
-        Verifier["artifact verifier"]
-        Package["validated + hash-stamped<br/>evidence package"]
-        RuntimeEvidence --> Package
-        Verifier --> Package
-    end
+    Replay["Fixed-case replay<br/>reproduce and protect known behavior"]
+    E2E["UserCat Agent E2E<br/>explore unknown behavioral boundaries"]
 
-    subgraph Gate["5) Paired Release Gate"]
-        direction TB
-        Aggregate["truth + lift<br/>stability + regressions"]
-        Decision["cleared / held / rejected"]
-        Aggregate --> Decision
-    end
+    Evidence["Real execution evidence<br/>trace + artifact + verifier"]
 
-    Cases --> Preflight
-    Baseline --> BaseRuns
-    Candidate --> CandidateRuns
-    BaseRuns --> Native
-    CandidateRuns --> Native
-    BaseRuns --> Portable
-    CandidateRuns --> Portable
-    Native --> RuntimeEvidence
-    Portable --> RuntimeEvidence
-    Artifacts --> Verifier
-    Package --> Aggregate
+    Review["Inspector + Reviewer<br/>analyze lift, regressions, and root causes"]
+
+    Decision["Auditable evolution decision<br/>cleared / held / rejected"]
+
+    NewCase["Discovered issue<br/>next replay-case candidate"]
+
+    Change --> Risk
+    Risk --> Known
+    Risk --> Unknown
+
+    Known --> Replay
+    Unknown --> E2E
+
+    Replay --> Evidence
+    E2E --> Evidence
+
+    Evidence --> Review
+    Review --> Decision
+    Review --> NewCase
 ```
 
-The native path uses XiaobaOS trace and Arena-stage evidence. The portable path uses only Barena-observed input, process output, runtime status, workspace changes, and deterministic verifier results. Both paths aggregate baseline/candidate attempts into truth, observed lift, stability, regressions, and the final release decision.
+Agent Harnesses keep changing, and each change can improve one behavior while silently breaking another. Barena makes that evolution auditable through two complementary evaluation paths:
 
-XiaobaOS 0.1.1 and 0.2.0 run UserCat, InspectorCat, and ReviewerCat as a composite native Arena pipeline—not three independent evaluator `AgentSession`s. Portable runs mark those stages `not_applicable`, emit no evaluator traces, and cap boundary-only confidence at `medium`.
+- **Fixed-case replay** protects known capabilities with repeatable baseline/candidate runs.
+- **UserCat Agent E2E** probes ambiguous, incomplete, multi-turn user behavior to discover unknown boundaries.
 
-Barena is a release gate, not a benchmark leaderboard. The goal is not one impressive score; it is repeatable proof that an agent capability can cross a trust boundary without breaking expected behavior.
+Both paths converge on persisted execution evidence. Inspector and Reviewer analyze the trace, artifacts, verifier results, observed lift, stability, and regressions before Barena emits a release decision. A newly discovered issue becomes a candidate for the next fixed replay suite, turning one failure into a permanent regression test.
+
+In v0.1, paired replay, evidence persistence, verification, aggregation, and the release gate are implemented across the supported runtime profiles. XiaobaOS 0.1.1 and 0.2.0 provide UserCat, InspectorCat, and ReviewerCat as a composite native Arena pipeline—not three independent evaluator `AgentSession`s. Portable runs currently mark those stages `not_applicable`, emit no evaluator traces, and cap boundary-only confidence at `medium`; Barena never presents missing evaluator evidence as a completed Agent E2E review.
+
+Barena is a release gate for Agent Harness changes, not a benchmark leaderboard. The goal is not one impressive score; it is repeatable proof that a harness change improves observable behavior without breaking capabilities users already trust.
 
 ---
 
@@ -151,7 +137,7 @@ Stock XiaobaOS 0.2.0 is compatible with Barena's native probe and artifact contr
 
 ## MVP1
 
-Barena MVP1 is a TypeScript CLI/TUI for verifier-backed release evaluation of open-source Agent capabilities.
+Barena MVP1 is a TypeScript CLI/TUI for verifier-backed release evaluation of Agent Harness changes, with Skill and Role changes implemented as the first release subjects.
 
 | Area | Capability |
 |---|---|
