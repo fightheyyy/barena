@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="assets/hero.gif" alt="Barena — E2E evaluation and release gates for Agent Harness Evolution." width="100%" />
+<img src="assets/hero.gif" alt="Barena — 面向 Agent Harness 演进的端到端评测与发布门禁。" width="100%" />
 
 # Barena
 
-### E2E evaluation and release gates for Agent Harness Evolution
+### 面向 Agent Harness 演进的端到端评测与发布门禁
 
 [![Barena](https://img.shields.io/badge/Barena-v0.1.0-6B7280.svg?labelColor=111827)](https://github.com/fightheyyy/barena)
 [![Agent E2E](https://img.shields.io/badge/AI_Agent-E2E_Testing-D4A72C.svg?labelColor=111827)](#how-it-works)
@@ -15,64 +15,68 @@
 [![Runtime](https://img.shields.io/badge/runtime-XiaobaOS_0.1.1_%7C_0.2.0-6B7280.svg?labelColor=7C3AED)](#current-runtime-boundary)
 [![License](https://img.shields.io/badge/License-Apache--2.0-6B7280.svg?labelColor=16A34A)](#license)
 
-**When code becomes a black box, behavior becomes the contract. Barena tests the contract.**
+**当 Agent Harness 持续变化，行为就是最终契约。Barena 负责验证这份契约。**
 
-[Positioning](docs/POSITIONING.md) · [Why Agent E2E](#why-agent-e2e-testing) · [How It Works](#how-it-works) · [Runtime Support](#runtime-support) · [Quick Start](#quick-start) · [Boundaries](#boundaries)
+[产品定位](docs/POSITIONING.md) · [为什么需要 Agent E2E](#why-agent-e2e-testing) · [工作原理](#how-it-works) · [使用场景](#use-cases) · [运行时支持](#runtime-support) · [快速开始](#quick-start) · [能力边界](#boundaries)
 
 </div>
 
 ---
 
-> What if every Agent Harness change had to prove it could still complete real user tasks?
+> 如果每一次 Agent Harness 变更，都必须先证明它仍能完成真实用户任务呢？
 
-Barena is an open-source E2E evaluation and release framework for Agent Harness Evolution. It treats the complete harness — model, prompt, Role, Skills, tools, memory, permissions, and runtime — as a black box, then evaluates each concrete change through clean baseline/candidate runs, traces, artifacts, replay evidence, verifiers, and release decisions.
+Barena 是一个面向 **Agent Harness 演进**的端到端评测与发布框架。它把模型、Prompt、Role、Skill、工具、记忆、权限和 Runtime 组成的完整 Harness 视为被测系统，通过隔离的 baseline/candidate 运行、Trace、Artifact、Replay、确定性 Verifier 和发布决策，审计每一次具体变更。
 
-Here, **harness evolution** means versioned changes to the components that shape Agent behavior; it does not mean autonomous self-modification. Phase 1 makes Skill and Role changes first-class while preserving the same release model for future model, prompt, tool, memory-policy, and runtime changes.
+这里的 **Harness Evolution** 指所有会改变 Agent 行为的版本化变更，并不等同于 Agent 自主修改自身。v0.1 首先把 Skill 与 Role 变更做成一等评测对象，同时保留同一套 baseline/candidate 发布模型，用于承载后续的模型、Prompt、工具、记忆策略和 Runtime 变更。
 
-The authoritative product scope is locked in [`docs/POSITIONING.md`](docs/POSITIONING.md): Barena evaluates whether a concrete Agent change is effective, stable, regression-free, and ready to ship. Phase 1 combines native XiaobaOS Role/Skill release CI with a portable deterministic verifier for external CLI agents.
+权威产品边界记录在 [`docs/POSITIONING.md`](docs/POSITIONING.md)：Barena 要回答的不是“哪个 Agent 排名更高”，而是“一次具体变更是否有效、稳定、没有不可接受的回归，并且可以发布”。第一阶段同时提供 XiaobaOS Role/Skill 原生发布评测，以及面向外部 CLI Agent 的 Portable 确定性验证路径。
 
-The current release supports exact XiaobaOS 0.1.1 and 0.2.0 native Arena contracts. It also runs OpenClaw through a built-in subprocess adapter and Hermes/custom CLI agents through `barena.portable_target_*.v1`. Portable runs preserve honest boundary/workspace/verifier evidence and never fabricate native traces or evaluator sessions.
+当前版本支持 XiaobaOS 0.1.1 与 0.2.0 的原生 Arena 契约；同时通过内置 subprocess adapter 运行 OpenClaw，并通过 `barena.portable_target_*.v1` 接入 Hermes 或自定义 CLI Agent。Portable 运行只声明真实存在的 boundary/workspace/verifier 证据，不伪造目标 Runtime 的原生 Trace 或 evaluator session。
 
 ---
 
-## Why Agent E2E Testing
+<a id="why-agent-e2e-testing"></a>
 
-An AI agent's behavior is no longer defined by code alone. It emerges from model decisions, prompts, skills, tool calls, memory, permissions, environment state, and external services. Reading the implementation cannot prove that the system will finish the user's job correctly.
+## 为什么需要 Agent E2E
 
-Every model swap, prompt edit, new skill, or tool change can introduce a silent regression. Barena moves trust from implementation inspection to end-to-end behavioral evidence.
+AI Agent 的行为不再只由代码决定，而是由模型决策、Prompt、Skill、工具调用、记忆、权限、环境状态和外部服务共同涌现。仅仅阅读实现，无法证明系统最终能正确完成用户任务。
 
-| Release question | Barena evidence |
+每一次模型替换、Prompt 修改、Skill 新增或工具变更，都可能引入静默回归。Barena 把发布信任从“看起来实现正确”转移到“存在可复查的端到端行为证据”。
+
+| 发布前必须回答的问题 | Barena 提供的证据 |
 |---|---|
-| What agent capability changed? | Subject manifest, source path, fingerprint |
-| Is it safe enough to run? | Static scan findings |
-| What happened end to end? | Trace events and artifacts |
-| Did it produce the correct outcome? | Verifier result |
-| Is the behavior stable? | Replay attempts |
-| Should this release be trusted? | `cleared`, `held`, or `rejected` |
+| 哪项 Agent 能力发生了变化？ | Subject manifest、源码路径、Fingerprint |
+| 该变更是否允许进入真实执行？ | Skill 静态扫描与 fail-closed preflight |
+| Agent 端到端实际做了什么？ | Trace 事件与 Artifact |
+| 最终结果是否正确？ | 确定性 Verifier 结果 |
+| 行为是否稳定？ | 多次独立 Replay |
+| 这次变更是否应该发布？ | `cleared`、`held` 或 `rejected` |
 
 ---
 
-## How It Works
+<a id="how-it-works"></a>
+
+## 工作原理
 
 ```mermaid
 flowchart LR
-    Change["Agent Harness keeps evolving<br/>baseline → candidate<br/>model / prompt / Skill / tool / runtime"]
+    Change["Agent Harness持续进化<br/>baseline → candidate<br/>模型 / Prompt / Skill / Tool / Runtime"]
 
-    Risk["Behavior changes are unpredictable<br/>capabilities may improve or regress"]
+    Risk["行为变化不可预测<br/>可能提升，也可能退化"]
 
-    Known["Did we break<br/>a known capability?"]
-    Unknown["What boundary will<br/>a real user hit next?"]
+    Known["已知能力有没有被改坏？"]
+    Unknown["真实用户还会撞到什么边界？"]
 
-    Replay["Fixed-case replay<br/>reproduce and protect known behavior"]
-    E2E["UserCat Agent E2E<br/>explore unknown behavioral boundaries"]
+    Replay["固定Case Replay<br/>复现并检查历史能力"]
+    E2E["UserCat Agent E2E<br/>探索未知行为边界"]
 
-    Evidence["Real execution evidence<br/>trace + artifact + verifier"]
+    Evidence["真实执行证据<br/>Trace + Artifact + Verifier"]
 
-    Review["Inspector + Reviewer<br/>analyze lift, regressions, and root causes"]
+    Review["Inspector + Reviewer<br/>分析提升、回归与失败原因"]
 
-    Decision["Auditable evolution decision<br/>cleared / held / rejected"]
+    Decision["可审计的进化结论<br/>cleared / held / rejected"]
 
-    NewCase["Discovered issue<br/>next replay-case candidate"]
+    NewCase["发现的新问题<br/>沉淀为下一轮Replay Case"]
 
     Change --> Risk
     Risk --> Known
@@ -89,93 +93,118 @@ flowchart LR
     Review --> NewCase
 ```
 
-Agent Harnesses keep changing, and each change can improve one behavior while silently breaking another. Barena makes that evolution auditable through two complementary evaluation paths:
+Agent Harness 持续变化，一项能力得到提升的同时，另一项能力可能静默退化。Barena 使用两条互补路径让演进过程可审计：
 
-- **Fixed-case replay** protects known capabilities with repeatable baseline/candidate runs.
-- **UserCat Agent E2E** probes ambiguous, incomplete, multi-turn user behavior to discover unknown boundaries.
+- **固定 Case Replay**：通过可重复的 baseline/candidate 运行保护已知能力。
+- **UserCat Agent E2E**：模拟信息不完整、表达模糊和多轮追问的真实用户，探索未知行为边界。
 
-Both paths converge on persisted execution evidence. Inspector and Reviewer analyze the trace, artifacts, verifier results, observed lift, stability, and regressions before Barena emits a release decision. A newly discovered issue becomes a candidate for the next fixed replay suite, turning one failure into a permanent regression test.
+两条路径最终汇聚为持久化执行证据。Inspector 与 Reviewer 分析 Trace、Artifact、Verifier、能力提升、稳定性和回归风险，Barena 再输出发布决策。新发现的问题会成为下一轮固定 Replay 的候选 Case，但主流程图保持单向表达，不把发现问题后的治理流程画成运行时回路。
 
-In v0.1, paired replay, evidence persistence, verification, aggregation, and the release gate are implemented across the supported runtime profiles. XiaobaOS 0.1.1 and 0.2.0 provide UserCat, InspectorCat, and ReviewerCat as a composite native Arena pipeline—not three independent evaluator `AgentSession`s. Portable runs currently mark those stages `not_applicable`, emit no evaluator traces, and cap boundary-only confidence at `medium`; Barena never presents missing evaluator evidence as a completed Agent E2E review.
+v0.1 已在受支持的 Runtime Profile 中实现配对 Replay、证据持久化、确定性验证、结果聚合和发布门禁。XiaobaOS 0.1.1 与 0.2.0 将 UserCat、InspectorCat 和 ReviewerCat 作为一条复合原生 Arena Pipeline 提供，而不是三个相互独立的 evaluator `AgentSession`。Portable 运行会把这些阶段标记为 `not_applicable`，不生成虚假的 evaluator Trace，并将仅有边界证据的置信度限制为 `medium`。
 
-Barena is a release gate for Agent Harness changes, not a benchmark leaderboard. The goal is not one impressive score; it is repeatable proof that a harness change improves observable behavior without breaking capabilities users already trust.
+Barena 是 Agent Harness 变更的发布门禁，而不是 Benchmark 排行榜。目标不是获得一个漂亮分数，而是反复证明：Candidate 改善了可观察行为，同时没有破坏用户已经依赖的能力。
 
 ---
 
-## Validation with SkillsBench
+<a id="use-cases"></a>
 
-Barena uses SkillsBench tasks to validate its core claim: a concrete Agent Harness change should produce reproducible baseline/candidate evidence that reveals capability lift, regressions, and instability. SkillsBench is the public case source; Barena adds paired execution, trace and artifact retention, replay, deterministic verification, and the release decision.
+## Barena 有什么用
 
-The XiaobaOS validation pack projects one pinned SkillsBench `dialogue-parser` task into the two lanes shown above:
+下面这些并不是彼此割裂的产品功能。它们都可以归约为同一个问题：**Harness 从 baseline 变成 candidate 后，能不能让真实用户安全地使用？**
 
-| Lane | Case | Validation question |
+| 使用场景 | Baseline → Candidate | Barena 要回答的问题 |
 |---|---|---|
-| Fixed-case replay | Explicit adapted graph specification | Does the candidate preserve and repeat a known capability? |
-| UserCat Agent E2E | Low-information request with one adaptive follow-up available and the same hidden oracle | Can the candidate recover the required outcome when a real user's request is incomplete? |
+| **定制 Skill / Role 交付验收** | 无 Skill 或通用 Role → 客户定制版本 | Skill 是否真的被激活、选对工具并完成任务，而不是等客户差评后才发现问题？ |
+| **自进化晋升门禁** | 进化前 Harness → 自动生成的进化补丁 | 这次自进化带来了真实提升，还是应该暂缓或拒绝晋升？ |
+| **线上 Badcase 修复回归** | 出现用户投诉的生产版本 → 修复版本 | 历史问题是否被修复，同时没有破坏其他已知能力？ |
+| **模型或 Provider 替换** | 原模型 → 新模型、低成本模型或新 Provider | 成本和延迟优化后，任务成功率、工具调用与多轮行为是否退化？ |
+| **Prompt / Tool / MCP 契约变更** | 旧 Prompt、工具定义或 Schema → 新版本 | Agent 是否仍能选对工具、填写正确参数，并避免把“说自己调用了工具”当成真实完成？ |
+| **Runtime / 框架升级** | 旧 XiaobaOS、OpenClaw、Hermes 或自定义 Harness → 新版本 | 会话、工具调用、异常恢复、Artifact 和结果交付是否仍然成立？ |
+| **安全与权限策略调整** | 旧确认/Allowlist/记忆策略 → 新策略 | Candidate 能否阻止危险操作，同时不误伤正常任务？ |
+| **跨 Runtime 迁移** | 原 Harness → 新目标 Harness | 同一个 Skill 或工作流换到 XiaobaOS、OpenClaw、Hermes 或自定义 CLI Agent 后是否仍然有效？ |
 
-Both cases compare the same XiaobaOS Role without and with the candidate `dialogue-graph` Skill. They retain the upstream revision and task hash, use the same workspace fixture, and verify the resulting graph through Barena's trusted structured artifact checks. The executable parser requirement is explicitly omitted because this calibration does not execute subject-authored verifier code. See the complete [XiaobaOS validation protocol](calibration/skillsbench/dialogue-graph-mini/VALIDATION.md).
-
-This repository proves the case projection and paired orchestration with deterministic contract tests. A local additive XiaobaOS audit-contract patch also completed Barena preflight and reached the real provider boundary with native trace, Arena-stage, verifier, redaction, cleanup, and physical-call evidence. That run stopped fail-closed on an expired local OAuth session (`401`; target trace reported zero prompt/completion tokens; billing usage unavailable; zero retry) before the candidate arm, so it does **not** establish live capability lift. Until a complete baseline/candidate run is published, this remains a **SkillsBench-derived Barena calibration**, not an official SkillsBench result or completed effectiveness claim.
-
----
-
-## Runtime Support
-
-Barena ships two explicit evidence profiles:
-
-- `xiaobaos_native`: XiaobaOS Role/Skill paired evaluation with native Arena evidence.
-- `portable_verifier`: OpenClaw built-in adapter or Hermes/custom JSON driver, with boundary/workspace/verifier evidence.
-
-Portable clearance is real but lower-evidence than XiaobaOS native clearance. Reports explicitly record `evaluation_mode=portable_verifier`, `evidence_profile=boundary_verified`, `target_native_trace=false`, and `isolation=policy_only`. Driver completion never bypasses Barena's deterministic verifier.
-
-OpenClaw has a built-in adapter. Hermes is driver-compatible in this release; the bundled driver is an offline conformance example, not a claim of native/live Hermes validation.
-
-Released XiaobaOS 0.2.0 is compatible with Barena's native probe and artifact contracts, but it does not yet ship the `arena live-contract --json` capability or authoritative physical provider-call telemetry required for paid/live evaluation. Barena therefore holds an unpatched installation before either arm starts. The additive audit-contract patch has been exercised locally through a real provider request, but is not presented as a released XiaobaOS capability.
+v0.1 对 **XiaobaOS Skill/Role 配对评测、固定 Case Replay、原生证据留存与发布决策**提供一等支持；OpenClaw、Hermes 和自定义 CLI Agent 通过 Portable Verifier Contract 接入。模型、Prompt、Tool、Policy 和 Runtime 变更共享同一评测模型，但仍需要针对目标 Harness 准备对应的 baseline/candidate 配置、Case 和确定性断言，不能把一张通用分数表当成发布证明。
 
 ---
 
-## What Barena Clears
+## 使用 SkillsBench 验证 Barena
 
-| Subject | Status | Notes |
+Barena 使用 SkillsBench 任务验证自己的核心主张：一次具体的 Agent Harness 变更，应当产出可复现的 baseline/candidate 证据，并揭示能力提升、回归和不稳定行为。SkillsBench 提供公开 Case 来源；Barena 在此基础上增加配对执行、Trace 与 Artifact 留存、Replay、确定性验证和发布决策。
+
+XiaobaOS 验证包把一个固定版本的 SkillsBench `dialogue-parser` 任务投影到上述两条评测路径：
+
+| 评测路径 | Case | 验证问题 |
+|---|---|---|
+| 固定 Case Replay | 明确给出适配后的图结构要求 | Candidate 能否稳定复现并保护一项已知能力？ |
+| UserCat Agent E2E | 信息不足的请求、一次自适应追问机会、相同隐藏 Oracle | 当真实用户表达不完整时，Candidate 能否通过交互恢复并完成目标？ |
+
+两个 Case 都比较同一个 XiaobaOS Role 在“不加载”与“加载”候选 `dialogue-graph` Skill 时的表现。它们保留上游 Revision 与任务哈希，使用相同 Workspace Fixture，并通过 Barena 可信的结构化 Artifact 断言验证结果图。由于该校准不会执行被测 Skill 自带的 Verifier 代码，因此明确排除了上游的可执行 Parser 要求。完整方法见 [XiaobaOS 验证协议](calibration/skillsbench/dialogue-graph-mini/VALIDATION.md)。
+
+仓库已经通过确定性契约测试验证了 Case 投影与配对编排。一个本地增量 XiaobaOS Audit Contract 补丁也通过了 Barena Preflight，并携带原生 Trace、Arena Stage、Verifier、脱敏、清理和物理调用证据到达真实 Provider 边界。该次运行在 Candidate Arm 开始前因本地 OAuth 过期而 fail-closed（`401`；目标 Trace 报告 Prompt/Completion Token 均为零；Billing Usage 不可用；零重试），因此它**不能证明线上能力提升**。在完整 baseline/candidate 结果发布前，这只是 **SkillsBench-derived Barena calibration**，不是 SkillsBench 官方成绩，也不是已经完成的有效性结论。
+
+---
+
+<a id="runtime-support"></a>
+
+## Runtime 支持
+
+Barena 提供两种边界清晰的证据 Profile：
+
+- `xiaobaos_native`：XiaobaOS Role/Skill 配对评测，保留原生 Arena 证据。
+- `portable_verifier`：通过 OpenClaw 内置 Adapter 或 Hermes/自定义 JSON Driver，保留 Boundary、Workspace 和 Verifier 证据。
+
+Portable 路径可以产生真实发布结论，但证据强度低于 XiaobaOS 原生路径。报告会明确记录 `evaluation_mode=portable_verifier`、`evidence_profile=boundary_verified`、`target_native_trace=false` 和 `isolation=policy_only`。Driver 声称完成任务，不能绕过 Barena 的确定性 Verifier。
+
+OpenClaw 已有内置 Adapter。当前版本的 Hermes 支持是 Driver Contract 兼容；仓库自带的 Driver 是离线协议示例，不代表已经完成 Hermes 原生或线上验证。
+
+已发布的 XiaobaOS 0.2.0 与 Barena 的原生 Probe 和 Artifact Contract 兼容，但尚未包含付费/线上评测要求的 `arena live-contract --json` 能力和权威物理 Provider 调用遥测。因此，Barena 会在任一 Arm 开始前将未打补丁的安装判定为 `held`。增量 Audit Contract 补丁已在本地触达真实 Provider 请求，但不会被包装成 XiaobaOS 已发布能力。
+
+---
+
+## 当前可以评测什么
+
+| 评测对象 | 状态 | 说明 |
 |---|---:|---|
-| Local `SKILL.md` directory | Supported | Import, scan, run, replay, report |
-| GitHub skill repository | Supported | Clone-and-scan only; no install scripts |
-| Built-in agent target profile | Supported | `opencode`, `xiaoba`, `hermes`, `openclaw` |
-| XiaobaOS Skill effectiveness | Native contract | Same immutable Role: `role` baseline vs `role_skill` candidate; an unpatched 0.2.0 install is held before paid execution |
-| XiaobaOS Role effectiveness | Native contract | Explicit baseline Role vs candidate Role under pinned cases; an unpatched 0.2.0 install is held before paid execution |
-| XiaobaOS native trace package | Supported | Session-log-v3 traces, Arena stages, artifacts, verifier, hashes |
-| OpenClaw portable adapter | Supported | Local JSON CLI, Skill eligibility, boundary/workspace/verifier evidence |
-| Hermes/custom portable driver | Supported contract | Strict JSON driver; native/live Hermes validation is not claimed |
-| Reusable portable E2E case | Supported | Task, fixtures, assertions, replay controls, timeout |
-| Three independent evaluator AgentSessions | Not claimed | XiaobaOS stages are composite; portable stages are not applicable |
-| Cross-version regression report | Coming soon | Compare pass, fail, and flaky behavior between releases |
+| 本地 `SKILL.md` 目录 | 已支持 | Import、Scan、Run、Replay、Report |
+| GitHub Skill 仓库 | 已支持 | 仅 Clone 与 Scan；不运行安装脚本 |
+| 内置 Agent Target Profile | 已支持 | `opencode`、`xiaoba`、`hermes`、`openclaw` |
+| XiaobaOS Skill 有效性 | 原生契约 | 同一不可变 Role：`role` baseline 对比 `role_skill` candidate；未打补丁的 0.2.0 会在付费执行前被 `held` |
+| XiaobaOS Role 有效性 | 原生契约 | 固定 Case 下显式 baseline Role 对比 candidate Role；未打补丁的 0.2.0 会在付费执行前被 `held` |
+| XiaobaOS 原生 Trace Package | 已支持 | Session-log-v3 Trace、Arena Stage、Artifact、Verifier、Hash |
+| OpenClaw Portable Adapter | 已支持 | 本地 JSON CLI、Skill Eligibility、Boundary/Workspace/Verifier 证据 |
+| Hermes/自定义 Portable Driver | 契约已支持 | 严格 JSON Driver；不声称原生或线上 Hermes 验证 |
+| 可复用 Portable E2E Case | 已支持 | Task、Fixture、Assertion、Replay Control、Timeout |
+| 三个独立 Evaluator AgentSession | 不声称 | XiaobaOS 为复合 Stage；Portable 路径不适用 |
+| 跨版本回归报告 | 计划中 | 比较不同版本的 Pass、Fail 与 Flaky 行为 |
 
 ---
 
 ## MVP1
 
-Barena MVP1 is a TypeScript CLI/TUI for verifier-backed release evaluation of Agent Harness changes, with Skill and Role changes implemented as the first release subjects.
+Barena MVP1 是一个基于 TypeScript 的 CLI/TUI，用确定性 Verifier 支撑 Agent Harness 变更的发布评测；Skill 与 Role 是第一批一等评测对象。
 
-| Area | Capability |
+| 模块 | 能力 |
 |---|---|
-| Import | Local skills, GitHub skill repositories, built-in agent targets |
-| Safety | Static scan before runtime execution |
-| Runtime | Clean run directories under `runs/<run-id>/` |
-| Review | UserCat, InspectorCat, ReviewerCat contracts |
-| Stability | Replay attempts with trace refs |
-| Verification | Optional verifier command |
-| Output | JSON scorecards and Markdown reports |
-| Decisions | `cleared`, `held`, `rejected` |
-| Statuses | `pass`, `unstable`, `reopened`, `blocked`, `unsafe` |
-| XiaobaOS Skill release | Same-Role baseline/candidate pairing with native activation proof |
-| XiaobaOS Role release | Explicit Role baseline/candidate pairing |
-| UI | Guided import/setup CLI plus a keyboard TUI for local evaluation, results, and traces |
+| Import | 本地 Skill、GitHub Skill 仓库、内置 Agent Target |
+| Safety | Runtime 执行前静态扫描 |
+| Runtime | `runs/<run-id>/` 下的独立运行目录 |
+| Review | UserCat、InspectorCat、ReviewerCat 契约 |
+| Stability | 带 Trace 引用的多次 Replay |
+| Verification | 可选 Verifier Command |
+| Output | JSON Scorecard 与 Markdown Report |
+| Decisions | `cleared`、`held`、`rejected` |
+| Statuses | `pass`、`unstable`、`reopened`、`blocked`、`unsafe` |
+| XiaobaOS Skill Release | 同 Role baseline/candidate 配对与原生激活证明 |
+| XiaobaOS Role Release | 显式 Role baseline/candidate 配对 |
+| UI | 引导式 Import/Setup CLI，以及用于评测、结果和 Trace 检查的键盘 TUI |
 
 ---
 
-## Quick Start
+<a id="quick-start"></a>
 
-Initialize one project-scoped Agent profile, then evaluate with the stored target, attempts, run directory, and pinned starter suite:
+## 快速开始
+
+先初始化一个项目级 Agent Profile，再使用持久化的 Target、运行次数、Run Directory 和固定 Starter Suite 发起评测：
 
 ```bash
 barena init --target openclaw \
@@ -187,11 +216,11 @@ barena doctor
 barena eval skill ./my-skill
 ```
 
-This writes `.barena/config.json` with target settings and **environment-variable names only**. Barena never writes API-key or base-URL values into the config, doctor output, case, or report. If the target Agent already owns OAuth or provider configuration, omit the provider flags; doctor reports that authentication as target-managed.
+该命令会写入 `.barena/config.json`，其中只保存 Target 设置和**环境变量名称**。Barena 不会把 API Key 或 Base URL 的值写入 Config、Doctor 输出、Case 或 Report。如果目标 Agent 已经管理 OAuth 或 Provider 配置，可以省略 Provider Flags；Doctor 会把认证方式标记为 Target-managed。
 
-`barena eval` is an alias for `barena evaluate`. Explicit flags always override project defaults. The default suite is `skillsbench:starter`, currently one pinned SkillsBench-derived dialogue-graph calibration task. It is an onboarding and integration proof, not a broad or official SkillsBench score.
+`barena eval` 是 `barena evaluate` 的别名。显式 Flags 始终覆盖项目默认值。默认 Suite 为 `skillsbench:starter`，目前包含一个固定版本、由 SkillsBench 衍生的 Dialogue Graph 校准任务。它用于证明安装和集成链路，不是大规模或官方 SkillsBench 成绩。
 
-To configure another CLI Agent, point Barena at a strict portable JSON driver:
+要配置其他 CLI Agent，请让 Barena 指向一个符合严格协议的 Portable JSON Driver：
 
 ```bash
 barena init --target my-agent \
@@ -204,43 +233,43 @@ barena doctor --target my-agent
 barena eval skill ./my-skill
 ```
 
-The target Agent owns its provider call. Portable evaluation uses deterministic artifact/final-state verification and does not require a second Judge API. UserCat, InspectorCat, and ReviewerCat are XiaobaOS-native composite evaluator stages, not hidden extra Agents started for every portable run.
+Provider 调用由目标 Agent 自己负责。Portable 评测使用确定性的 Artifact/Final State 验证，不要求额外调用第二个 Judge API。UserCat、InspectorCat 和 ReviewerCat 是 XiaobaOS 原生的复合 Evaluator Stage，不会在每次 Portable 运行中偷偷启动额外 Agent。
 
-For an interactive import/setup flow instead, start with:
+需要交互式导入和配置时，使用：
 
 ```bash
 barena guide
 ```
 
-Running `barena` with no arguments in an interactive terminal opens the same guide. It asks for the Skill source, target Agent, E2E case, and attempts per arm; then it explains the baseline/candidate comparison, evidence profile, snapshot destination, and exact automation command before changing anything. Preparing the evaluation and starting model or paid execution require separate confirmations.
+在交互式终端中直接运行不带参数的 `barena`，也会打开相同引导。它依次询问 Skill 来源、目标 Agent、E2E Case 和每个 Arm 的运行次数；在修改任何内容前，会解释 baseline/candidate 对比、Evidence Profile、Snapshot 位置和可复现的自动化命令。准备评测与开始模型/付费执行需要分别确认。
 
-If the Skill and E2E case already exist locally, open the keyboard workspace instead:
+如果 Skill 和 E2E Case 已经在本地，可以直接打开键盘工作区：
 
 ```bash
 barena tui
 ```
 
-The TUI walks through XiaobaOS Skill/Role, OpenClaw Skill, and Hermes/custom portable-driver evaluation. It shows the current workflow step, examples for every required input, total target sessions, evidence limits, and a separate `y` confirmation before model-backed execution. Validation failures return to the relevant step with previous inputs preserved. Use `barena guide` when you still need to import/snapshot a Skill or create a starter case.
+TUI 会引导完成 XiaobaOS Skill/Role、OpenClaw Skill 和 Hermes/自定义 Portable Driver 评测。界面会展示当前步骤、每个必填项的示例、目标 Session 总数和证据边界，并在模型执行前单独要求输入 `y` 确认。验证失败时会返回对应步骤并保留已有输入。仍需导入/Snapshot Skill 或创建 Starter Case 时，使用 `barena guide`。
 
-The guide accepts three Skill sources:
+Guide 支持三种 Skill 来源：
 
-- A local directory containing `SKILL.md`.
-- A GitHub repository as `owner/repo` or a URL. Barena clones and snapshots it; it does not run install scripts or arbitrary repository code.
-- A SkillHub or other catalog Skill that you have already downloaded. Select the downloaded-directory option and point Barena at the local folder. This release does not claim direct SkillHub API integration.
+- 包含 `SKILL.md` 的本地目录。
+- `owner/repo` 或 URL 形式的 GitHub 仓库。Barena 只 Clone 并 Snapshot，不运行安装脚本或任意仓库代码。
+- 已经下载到本地的 SkillHub 或其他目录型 Skill。选择 Downloaded Directory 并指向本地目录；当前版本不声称直接接入 SkillHub API。
 
-The snapshot directory must not contain, or be contained by, the source Skill directory. If you are evaluating the current working directory, choose an external snapshot root, for example `barena guide --subjects-root ../barena-subjects`.
+Snapshot 目录不能包含 Source Skill 目录，也不能位于 Source Skill 目录内部。如果评测当前工作目录，请选择外部 Snapshot Root，例如 `barena guide --subjects-root ../barena-subjects`。
 
-Choose the Agent according to the evidence you need:
+根据所需证据强度选择 Agent：
 
-| Agent path | Current support | Evidence boundary |
+| Agent 路径 | 当前支持情况 | 证据边界 |
 |---|---|---|
-| XiaobaOS 0.1.1 / 0.2.0 | Native Arena integration | Highest-evidence path: native trace and Arena stages plus Barena verifier |
-| OpenClaw | Built-in portable adapter | Boundary/workspace/verifier evidence; no native trace; confidence capped at medium |
-| Hermes or another CLI Agent | Portable JSON driver contract | Driver-compatible only; native/live Hermes validation is not claimed |
+| XiaobaOS 0.1.1 / 0.2.0 | 原生 Arena 集成 | 最高证据路径：原生 Trace、Arena Stage 与 Barena Verifier |
+| OpenClaw | 内置 Portable Adapter | Boundary/Workspace/Verifier 证据；无原生 Trace；置信度最高为 Medium |
+| Hermes 或其他 CLI Agent | Portable JSON Driver Contract | 仅保证 Driver 兼容；不声称 Hermes 原生/线上验证 |
 
-For a real release decision, use an existing case with task-specific fixtures and deterministic assertions. The guide can create a minimal starter case to teach the schema and complete the first run, but that template is only onboarding scaffolding. It is not evidence that the case covers realistic behavior, regressions, adversarial inputs, or production quality.
+真实发布决策应使用包含任务专属 Fixture 和确定性 Assertion 的 Case。Guide 可以创建最小 Starter Case，帮助理解 Schema 并完成首次运行，但该模板只是上手脚手架，不能证明 Case 已覆盖真实行为、回归、对抗输入或生产质量。
 
-For CLI development from this source checkout:
+从源码 Checkout 开发 CLI：
 
 ```bash
 npm ci
@@ -249,7 +278,7 @@ npm link
 barena guide
 ```
 
-Evaluate an OpenClaw Skill as a no-Skill baseline versus the candidate Skill:
+评测 OpenClaw Skill，以不加载 Skill 为 baseline、加载候选 Skill 为 candidate：
 
 ```bash
 barena evaluate skill ./my-skill \
@@ -258,7 +287,7 @@ barena evaluate skill ./my-skill \
   --attempts 3
 ```
 
-Use the bundled SkillsBench-derived starter suite without writing a case file:
+不编写 Case 文件，直接使用仓库内置的 SkillsBench-derived Starter Suite：
 
 ```bash
 barena list suites
@@ -268,7 +297,7 @@ barena eval skill ./my-skill \
   --attempts 3
 ```
 
-Evaluate the same pair through a Hermes-compatible portable driver:
+通过 Hermes-compatible Portable Driver 评测同一组 baseline/candidate：
 
 ```bash
 barena evaluate skill ./my-skill \
@@ -278,9 +307,9 @@ barena evaluate skill ./my-skill \
   --attempts 3
 ```
 
-The portable case must use `target.adapter=portable` and a `target.runtime` matching `--target` (`hermes` above). To integrate a real Hermes or custom CLI Agent, copy `examples/portable-driver.mjs`, preserve the probe/request/result schemas, and replace the deterministic artifact write with the real target invocation. Driver completion never bypasses Barena's verifier.
+Portable Case 必须使用 `target.adapter=portable`，并让 `target.runtime` 与 `--target` 匹配（上述示例为 `hermes`）。接入真实 Hermes 或自定义 CLI Agent 时，复制 `examples/portable-driver.mjs`，保留 Probe/Request/Result Schema，然后把确定性 Artifact 写入替换为真实 Target 调用。Driver 完成任务不能绕过 Barena Verifier。
 
-Run XiaobaOS native Skill evaluation for CI:
+在 CI 中运行 XiaobaOS 原生 Skill 评测：
 
 ```bash
 barena evaluate skill ./my-skill \
@@ -291,9 +320,9 @@ barena evaluate skill ./my-skill \
   --live-policy ./live-policy.json
 ```
 
-This command starts model execution only when the installed XiaobaOS runtime proves Barena's live safety contract. An unpatched released XiaobaOS 0.2.0 returns a held result before paid execution; use the portable offline example below to verify the installable Barena path without credentials.
+只有已安装的 XiaobaOS Runtime 能证明满足 Barena Live Safety Contract 时，该命令才会开始模型执行。未打补丁的 XiaobaOS 0.2.0 会在付费执行前返回 `held`；如果只想在无凭证环境验证 Barena 的可安装链路，请使用下方 Portable 离线示例。
 
-For a subscription-backed XiaobaOS provider, copy the packaged policy template, set the provider environment variables, replace every `REPLACE_*` value with current verifiable data, set `hard_limit.verified=true` only after checking that entitlement, and run preflight before allowing either arm to call the model:
+使用订阅制 XiaobaOS Provider 时，复制打包的 Policy Template，设置 Provider 环境变量，将所有 `REPLACE_*` 替换为当前可核验数据；只有确认订阅额度后才能设置 `hard_limit.verified=true`，并在允许任一 Arm 调用模型前先运行 Preflight：
 
 ```bash
 cp ./examples/xiaoba-subscription-live-policy.template.json ./live-policy.json
@@ -310,17 +339,17 @@ barena evaluate skill ./my-skill \
   --preflight-only
 ```
 
-`billing_mode=subscription` uses zero-dollar accounting because no per-token price is claimed; it still requires recent entitlement evidence plus enforced call, input-token, output-token, provider/model, telemetry, and zero-retry bounds. Metered API users must instead provide positive sourced token prices and a verified provider-side hard limit. Barena persists environment-variable names and redacted evidence, never the credential value.
+`billing_mode=subscription` 不声明按 Token 单价，因此使用零美元记账；但仍要求近期订阅权益证据，以及可强制执行的调用次数、输入 Token、输出 Token、Provider/Model、遥测和零重试边界。按量付费 API 用户必须提供有来源的正数 Token 价格与经过验证的 Provider 侧 Hard Limit。Barena 只持久化环境变量名称和脱敏证据，不保存凭证值。
 
-`xiaobaos` is the recommended public target name; `xiaoba` remains a compatibility alias, and the executable remains `xiaoba`. The bundled SkillsBench-derived calibration pack can use the same native path with `--case-pack calibration/skillsbench/dialogue-graph-mini/case-pack.json`. It is a **SkillsBench-derived Barena calibration**, not an official SkillsBench or BenchFlow result.
+推荐对外使用 Target 名称 `xiaobaos`；`xiaoba` 继续作为兼容别名，可执行文件仍为 `xiaoba`。内置 SkillsBench-derived Calibration Pack 可以通过相同原生路径运行：`--case-pack calibration/skillsbench/dialogue-graph-mini/case-pack.json`。它是 **SkillsBench-derived Barena calibration**，不是 SkillsBench 或 BenchFlow 官方结果。
 
-To verify the installable portable protocol without model credentials, build a tarball and run the bundled offline driver in a clean consumer directory:
+要在没有模型凭证的情况下验证可安装 Portable Protocol，请构建 Tarball，并在干净 Consumer Directory 中运行内置离线 Driver：
 
 ```bash
-# In the Barena release checkout
+# 在 Barena 发布 Checkout 中
 npm pack
 
-# In a clean consumer directory
+# 在干净 Consumer Directory 中
 mkdir barena-smoke && cd barena-smoke
 npm init -y
 npm install /absolute/path/to/barena-0.1.0.tgz
@@ -334,13 +363,13 @@ npx barena e2e run \
   --target-command ./node_modules/barena/examples/portable-driver.mjs
 ```
 
-After `barena@0.1.0` is published, the install line becomes `npm install barena`. The bundled driver is deterministic and offline. A successful run returns exit `0`, `decision=cleared`, `evaluation_mode=portable_verifier`, and `evidence_profile=boundary_verified`. It proves the installable protocol and evidence path; it is not a live Hermes benchmark.
+`barena@0.1.0` 发布后，安装命令将变为 `npm install barena`。内置 Driver 是确定性离线实现。成功运行返回退出码 `0`、`decision=cleared`、`evaluation_mode=portable_verifier` 和 `evidence_profile=boundary_verified`。这证明可安装协议与证据链路成立，不代表真实 Hermes Benchmark。
 
-Missing binaries, incompatible protocols, credentials, activation evidence, traces, verifier evidence, or sandbox evidence produce `held`/blocked—not simulated success. Unsafe target outcomes produce `rejected` and exit `2`.
+缺少 Binary、协议不兼容、凭证缺失、激活证据缺失、Trace 缺失、Verifier 证据缺失或 Sandbox 证据缺失时，Barena 会产生 `held`/blocked，而不是模拟成功。不安全的 Target 结果会产生 `rejected`，并返回退出码 `2`。
 
 ---
 
-## Built-In Agent Targets
+## 内置 Agent Target
 
 ```bash
 barena list targets
@@ -348,16 +377,16 @@ barena import agent opencode --id opencode-ci
 barena run opencode-ci --replays 1
 ```
 
-| Target | Focus |
+| Target | 定位 |
 |---|---|
-| `opencode` | Coding agent and code-task CI |
-| `xiaoba` / public alias `xiaobaos` | Native Role/Skill Arena evaluation |
-| `hermes` | Portable JSON driver contract; native/live validation not claimed |
-| `openclaw` | Built-in portable local JSON adapter |
+| `opencode` | Coding Agent 与代码任务 CI |
+| `xiaoba` / 对外别名 `xiaobaos` | 原生 Role/Skill Arena 评测 |
+| `hermes` | Portable JSON Driver Contract；不声称原生/线上验证 |
+| `openclaw` | 内置 Portable Local JSON Adapter |
 
 ---
 
-## Commands
+## 命令参考
 
 ```text
 barena
@@ -389,9 +418,9 @@ barena doctor [--target <id>]
 
 ---
 
-## Run Package
+## Run Package 证据目录
 
-XiaobaOS native capability evaluation:
+XiaobaOS 原生能力评测：
 
 ```text
 runs/<xiaoba-skill-or-role-eval-id>/
@@ -413,9 +442,9 @@ runs/<xiaoba-skill-or-role-eval-id>/
   reports/report.md
 ```
 
-Every accepted evidence copy is hash-stamped. Each Barena attempt owns a distinct XiaobaOS run ID and workspace; XiaobaOS internal replay is additional evidence, not a replacement for independent attempts.
+每份被接受的证据副本都会写入 Hash。每次 Barena Attempt 拥有独立 XiaobaOS Run ID 和 Workspace；XiaobaOS 内部 Replay 是额外证据，不能替代 Barena 的独立 Attempt。
 
-Secondary OpenClaw Skill evaluation:
+OpenClaw Skill Portable 评测：
 
 ```text
 runs/<skill-eval-id>/
@@ -427,7 +456,7 @@ runs/<skill-eval-id>/
   reports/report.md
 ```
 
-Each arm contains the Agent E2E package below. Candidate workspaces stage only the selected Skill; baseline workspaces use an empty Skill allowlist.
+每个 Arm 都包含下方 Agent E2E Package。Candidate Workspace 只加载被选中的 Skill；Baseline Workspace 使用空 Skill Allowlist。
 
 ```text
 runs/<run-id>/
@@ -444,7 +473,7 @@ runs/<run-id>/
   reports/report.md
 ```
 
-Agent E2E runs use a separate evidence layout:
+Agent E2E Run 使用独立证据布局：
 
 ```text
 runs/<agent-e2e-run-id>/
@@ -462,11 +491,11 @@ runs/<agent-e2e-run-id>/
 
 ---
 
-## Barena As A Skill
+## 将 Barena 作为 Skill 使用
 
-Barena can also be packaged as an agent-facing clearance skill. In that form, the skill teaches an agent when to invoke Barena, how to interpret scorecards, and when to refuse self-promotion. The CLI remains the evidence engine.
+Barena 也可以被封装成面向 Agent 的 Clearance Skill。在这种形态下，Skill 告诉 Agent 何时调用 Barena、如何解释 Scorecard，以及何时拒绝自我晋升；CLI 仍然是实际证据引擎。
 
-The intended behavior is:
+目标行为如下：
 
 ```text
 skill / role / tool / prompt / runtime change
@@ -476,9 +505,11 @@ skill / role / tool / prompt / runtime change
 
 ---
 
-## Current Runtime Boundary
+<a id="current-runtime-boundary"></a>
 
-The highest-evidence path invokes exact XiaobaOS 0.1.1 or 0.2.0 native Arena contracts through the installed `xiaoba` executable:
+## 当前 Runtime 边界
+
+最高证据路径通过已安装的 `xiaoba` 可执行文件，调用 XiaobaOS 0.1.1 或 0.2.0 的精确原生 Arena Contract：
 
 ```text
 evaluation mode: xiaobaos_native
@@ -491,7 +522,7 @@ evaluator stages: composite XiaobaOS stages, not three independent AgentSessions
 network disabled: declared policy, not claimed as a hard network boundary
 ```
 
-The original deterministic clearance path remains for compatibility:
+原有确定性 Clearance 路径为兼容性而保留：
 
 ```text
 provider: barena-deterministic
@@ -499,9 +530,9 @@ adapter: xiaoba-compatible
 xiaoba_invoked: false
 ```
 
-That legacy path does **not** invoke XiaobaOS or `AgentSession`.
+该 Legacy 路径**不会**调用 XiaobaOS 或 `AgentSession`。
 
-External CLI agents use the portable verifier profile:
+外部 CLI Agent 使用 Portable Verifier Profile：
 
 ```text
 evaluation_mode: portable_verifier
@@ -513,22 +544,24 @@ confidence: at most medium
 decision: cleared | held | rejected from Barena verifier evidence
 ```
 
-The portable profile does not claim XiaobaOS evaluator clearance, native Hermes/OpenClaw traces, hard process/network isolation, or hidden reasoning visibility. A future external-evaluator seam may add stronger evidence without changing the portable contract.
+Portable Profile 不声称拥有 XiaobaOS Evaluator Clearance、Hermes/OpenClaw 原生 Trace、硬进程/网络隔离或隐藏推理可见性。未来可以通过 External Evaluator Seam 增加更强证据，而不改变现有 Portable Contract。
 
 ---
 
-## Boundaries
+<a id="boundaries"></a>
 
-Barena is not:
+## 能力边界
 
-- A complete malware detector.
-- A hosted benchmark leaderboard.
-- An automatic production promotion system.
-- A replacement for unit tests, code review, or runtime sandboxing.
+Barena 不是：
 
-Barena adds the end-to-end behavioral tests that agent releases increasingly depend on.
+- 完整的恶意软件检测器。
+- 托管式 Benchmark 排行榜。
+- 自动操作生产环境的发布系统。
+- 单元测试、代码审查或 Runtime Sandbox 的替代品。
 
-This repository deliberately does not copy XiaobaOS product surfaces such as Dashboard, Electron, Pet, Feishu, Weixin, output logs, or secrets. XiaobaOS-native normalization lives under `src/evaluation`; portable evaluator and target integrations live under `src/evaluators` and `src/targets`.
+Barena 补充的是 Agent 发布越来越依赖的端到端行为证据。
+
+本仓库不会复制 XiaobaOS 的 Dashboard、Electron、Pet、飞书、微信、Output Log 或 Secret 等产品面。XiaobaOS Native 归一化代码位于 `src/evaluation`；Portable Evaluator 与 Target 集成位于 `src/evaluators` 和 `src/targets`。
 
 ## License
 
