@@ -6,6 +6,7 @@ import { EvaluatorRuntime, TargetAdapter } from "../e2e/types";
 import { BarenaPortableEvaluatorRuntime } from "../evaluators/portable-evaluator-runtime";
 import { renderEvaluationReport } from "../reports/run-renderers";
 import { OpenClawTargetAdapter } from "../targets/openclaw-target-adapter";
+import { XiaobaTargetAdapter } from "../targets/xiaoba-target-adapter";
 import { ensureDir, hashDirectory, writeJson } from "../utils/fs";
 import { aggregateSkillEvaluation } from "./aggregate";
 import { prepareStaticAdmission, type StaticAdmissionReportV1 } from "./static-admission";
@@ -96,6 +97,7 @@ export async function runSkillEvaluation(input: RunSkillEvaluationInput): Promis
     evaluationRoot,
     evaluator,
     targetAdapter: input.targetAdapter,
+    candidateName: request.candidate.name,
   });
   const candidateRuns = await runArm({
     arm: "candidate",
@@ -106,6 +108,7 @@ export async function runSkillEvaluation(input: RunSkillEvaluationInput): Promis
     evaluationRoot,
     evaluator,
     targetAdapter: input.targetAdapter,
+    candidateName: request.candidate.name,
   });
   return writeEvaluationResult(
     evaluationRoot,
@@ -188,7 +191,7 @@ export function loadSkillSelection(skillPath: string): Extract<SkillSelection, {
   }
   const manifest = fs.readFileSync(manifestPath, "utf8");
   const name = frontmatterName(manifest) ?? path.basename(sourcePath);
-  if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
+  if (!/^[a-zA-Z0-9._-]+$/.test(name) || name === "." || name === "..") {
     throw new Error("Skill frontmatter name must contain only letters, numbers, dot, underscore, or dash");
   }
   return { mode: "path", name, source_path: sourcePath, fingerprint: hashDirectory(sourcePath) };
@@ -209,6 +212,7 @@ async function runArm(input: {
   evaluationRoot: string;
   evaluator: EvaluatorRuntime;
   targetAdapter?: TargetAdapter;
+  candidateName: string;
 }): Promise<EvaluationRunRef[]> {
   const refs: EvaluationRunRef[] = [];
   for (const caseEntry of input.cases) {
@@ -216,14 +220,14 @@ async function runArm(input: {
     if (!loaded) throw new Error(`Prepared case is missing: ${caseEntry.case_path}`);
     const caseDefinition = { ...loaded.caseDefinition, replays: input.attemptsPerArm - 1 };
     const armRunsRoot = path.join(input.evaluationRoot, "arms", input.arm, loaded.caseDefinition.case_id);
-    const targetAdapter = input.targetAdapter ?? new OpenClawTargetAdapter({
-      envAllowlist: loaded.caseDefinition.target.env_allowlist,
-    });
+    const targetAdapter = input.targetAdapter ?? defaultAdapter(loaded.caseDefinition);
     const scorecard = await runAgentE2ECase(caseDefinition, loaded.caseBaseDir, {
       runsRoot: armRunsRoot,
       evaluator: input.evaluator,
       targetAdapter,
-      skill: input.selection,
+      skill: input.selection.mode === "none" && loaded.caseDefinition.target.adapter === "xiaoba"
+        ? { mode: "none", excluded_name: input.candidateName }
+        : input.selection,
     });
     refs.push({
       arm: input.arm,
@@ -251,6 +255,7 @@ function createEvaluationId(): string {
 
 function targetIdFromAdapter(adapter: TargetAdapter | undefined): string {
   if (!adapter || adapter.id === "openclaw") return "openclaw";
+  if (adapter.id === "xiaobaos") return "xiaobaos";
   return adapter.id.startsWith("portable:") ? adapter.id.slice("portable:".length) : adapter.id;
 }
 
@@ -271,7 +276,23 @@ function validateCaseTarget(
     }
     return;
   }
+  if (targetId === "xiaobaos") {
+    if (caseDefinition.target.adapter !== "xiaoba" || caseDefinition.target.runtime !== "xiaobaos") {
+      throw new Error("XiaobaOS Skill evaluation requires case target.adapter=xiaoba and target.runtime=xiaobaos");
+    }
+    return;
+  }
   if (caseDefinition.target.adapter !== "portable" || caseDefinition.target.runtime !== targetId) {
     throw new Error(`Portable Skill evaluation for ${targetId} requires case target.adapter=portable and target.runtime=${targetId}`);
   }
+}
+
+function defaultAdapter(caseDefinition: ReturnType<typeof loadAgentE2ECase>["caseDefinition"]): TargetAdapter {
+  if (caseDefinition.target.adapter === "openclaw") {
+    return new OpenClawTargetAdapter({ envAllowlist: caseDefinition.target.env_allowlist });
+  }
+  if (caseDefinition.target.adapter === "xiaoba") {
+    return new XiaobaTargetAdapter({ envAllowlist: caseDefinition.target.env_allowlist });
+  }
+  throw new Error("Portable Skill evaluation requires an explicit PortableTargetAdapter");
 }

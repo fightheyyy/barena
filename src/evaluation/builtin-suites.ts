@@ -31,12 +31,7 @@ export interface ResolveBuiltinSuiteOptions {
 }
 
 export type ResolvedBuiltinSuite =
-  | {
-      kind: "xiaoba_case_pack";
-      suite: BuiltinSuiteInfo;
-      casePackPath: string;
-    }
-  | {
+  {
       kind: "portable_cases";
       suite: BuiltinSuiteInfo;
       casePaths: string[];
@@ -67,10 +62,6 @@ export function listBuiltinSuites(): BuiltinSuiteInfo[] {
 export function resolveBuiltinSuite(options: ResolveBuiltinSuiteOptions): ResolvedBuiltinSuite {
   const suite = findSuite(options.suite);
   const targetId = normalizeTarget(options.targetId);
-  if (targetId === "xiaobaos") {
-    return { kind: "xiaoba_case_pack", suite, casePackPath: STARTER_PACK_PATH };
-  }
-
   const outputRoot = path.resolve(options.outputRoot ?? path.join(".barena", "generated"));
   const generatedRoot = path.join(outputRoot, "suites", safeSegment(suite.id), safeSegment(targetId));
   const fixturesRoot = path.join(generatedRoot, "fixtures");
@@ -100,7 +91,15 @@ export function resolveBuiltinSuite(options: ResolveBuiltinSuiteOptions): Resolv
           ...(options.model && { model: options.model }),
           env_allowlist: envAllowlist,
         }
-      : {
+      : targetId === "xiaobaos"
+        ? {
+            adapter: "xiaoba",
+            runtime: "xiaobaos",
+            agent: requiredSafeAgent(options.agent, "XiaobaOS built-in suites require --role <role-id>"),
+            ...(options.model && { model: options.model }),
+            env_allowlist: envAllowlist,
+          }
+        : {
           adapter: "portable",
           runtime: targetId,
           ...(options.agent && { agent: options.agent }),
@@ -172,5 +171,10 @@ function record(value: unknown, label: string): Record<string, unknown> {
 
 function requiredString(value: unknown, label: string): string {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} must be a non-empty string`);
+  return value;
+}
+
+function requiredSafeAgent(value: string | undefined, message: string): string {
+  if (!value || !/^[A-Za-z0-9._-]+$/.test(value) || value === "." || value === "..") throw new Error(message);
   return value;
 }

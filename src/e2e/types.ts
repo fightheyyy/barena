@@ -32,7 +32,7 @@ export type AgentE2EReasonCode =
   | "openclaw_private_beta_not_supported";
 
 export type TargetSkillConfig =
-  | { mode: "none" }
+  | { mode: "none"; excluded_name?: string }
   | {
       mode: "path";
       name: string;
@@ -71,7 +71,7 @@ export interface AgentE2ECaseV1 {
 }
 
 export interface RuntimeProbeResult {
-  component: "xiaoba-evaluator" | "portable-evaluator" | "xiaoba-native-target" | "openclaw-target" | "portable-target";
+  component: "xiaoba-evaluator" | "portable-evaluator" | "xiaoba-native-target" | "xiaoba-target" | "openclaw-target" | "portable-target";
   status: "ready" | "blocked" | "not_started";
   reason_code?: AgentE2EReasonCode;
   detail: string;
@@ -132,7 +132,8 @@ export interface TargetInvocationResult {
   provider?: string;
   model?: string;
   session_id?: string;
-  native_trace_available: false;
+  native_trace_available: boolean;
+  native_trace_refs?: string[];
   observation_coverage: BoundaryObservedFrom[];
   trace_path: string;
   events: BoundaryTraceEvent[];

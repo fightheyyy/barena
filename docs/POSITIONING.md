@@ -1,18 +1,18 @@
 # Barena Positioning Contract
 
 Status: **Locked**
-Version: **1.2**
+Version: **1.4**
 Locked on: **2026-07-14**
-Tactical amendments: **2026-07-14 — XiaobaOS-first native runtime evidence; 2026-07-19 — portable verifier profile for external CLI agents**
+Tactical amendments: **2026-07-14 — XiaobaOS-first evidence; 2026-07-19 — portable verifier profile; 2026-07-22 — evaluator/target separation: Barena must not invoke XiaobaOS Arena; 2026-07-27 — Replay/Explore/Compare, AgentRuntimeAdapter, and OTel/OTLP architecture**
 Review on or after: **2026-10-14**
 
 This is the authoritative product-positioning document for Barena. README, SPEC, PLAN, roadmap, GitHub copy, and implementation priorities must remain consistent with it. If another document conflicts with this file, this file wins.
 
 ## Canonical Positioning
 
-> **Barena is end-to-end testing and release CI for open-source AI agents.**
+> **Barena is Agentic Eval and Release for Agent Harness Evolution.**
 
-> **Barena 是开源 AI Agent 的端到端测试与发布 CI。**
+> **Barena 是面向 Agent Harness 演进的 Agentic Eval 与发布框架。**
 
 Supporting promise:
 
@@ -76,9 +76,21 @@ Required output:
 - Issues and suspected root causes.
 - A release decision: `cleared`, `held`, or `rejected`.
 
-## Phase 1 Wedge: XiaobaOS Role and Skill Release CI
+## Framework Architecture
 
-The product category remains Agent E2E release CI. Phase 1 deliberately starts with the two native XiaobaOS capability artifacts that can be exercised through the existing Arena contract, then exposes the same deterministic release gate to external CLI agents through a lower-evidence portable verifier profile:
+The technical architecture is fixed in [`ARCHITECTURE.md`](./ARCHITECTURE.md):
+
+- `barena replay` protects known capabilities with fixed Cases.
+- `barena explore` uses a simulated-user, Inspector, and Reviewer loop to discover unknown behavior boundaries.
+- `barena compare` compares compatible baseline and candidate RunSets and feeds the release gate; it is not a third evaluator.
+- Every tested Agent Runtime is reached through `AgentRuntimeAdapter`.
+- OpenTelemetry is the canonical behavioral trace schema, OTLP is the canonical export/ingest protocol, and W3C Trace Context carries correlation.
+- Barena-owned boundary spans are mandatory. Runtime-native spans are optional, accepted only when genuinely exported, and never inferred from prose.
+- Artifact and deterministic verifier evidence remains first-class and is correlated with, not replaced by, OTel traces.
+
+## Phase 1 Wedge: XiaobaOS Skill Release Evaluation
+
+The product category remains Agentic Eval and Release for Agent Harness Evolution. Barena was extracted from the XiaobaOS Arena concept, so the independent product must own evaluation rather than call back into the embedded Arena. Phase 1 starts with XiaobaOS Skill changes through the ordinary Agent chat surface, then applies the same target-adapter boundary to OpenClaw, Hermes, and custom CLI agents:
 
 > Validate whether adding or updating an Agent capability makes the target runtime measurably better and reliably so, without introducing regressions.
 
@@ -86,24 +98,24 @@ Phase 1 is fixed as follows:
 
 | Concern | Phase 1 decision |
 |---|---|
-| Change type | XiaobaOS Role/Skill introduction or version update; external Agent behavior/configuration changes through portable cases |
-| Target runtime | XiaobaOS first native target; OpenClaw first built-in portable target; Hermes/custom CLI agents through the portable JSON driver |
-| Comparison | Skill: same explicit Role without vs with candidate Skill; Role: explicit baseline Role vs candidate Role |
-| Case source | XiaobaOS native Arena suites/cases first; SkillsBench-derived calibration and portable E2E cases next |
-| Evaluation profile | `xiaobaos_native` for native Arena; `portable_verifier` for external CLI agents |
-| Evaluator stages | XiaobaOS native stages where emitted; `not_applicable` in portable verifier mode |
-| Evidence | XiaobaOS native trace/scorecard plus artifacts, verifier, and replay; Barena boundary/workspace/verifier evidence for portable targets |
+| Change type | XiaobaOS Skill introduction or version update first; prompt/model/tool/runtime changes through versioned target configurations later |
+| Target runtime | XiaobaOS first built-in ordinary-chat target; OpenClaw built-in target; Hermes/custom CLI agents through the portable JSON driver |
+| Comparison | Same explicit Role and task without versus with the candidate Skill |
+| Case source | Barena cases, historical failures, and SkillsBench-derived calibration |
+| Evaluation profile | Barena-owned case driving, replay, inspection, deterministic verification, and release aggregation across targets |
+| Evaluator stages | Owned and recorded by Barena; a target runtime never supplies Barena's evaluator result |
+| Evidence | Barena boundary/workspace/verifier evidence plus optional genuine target-native trace when the ordinary target run emits it |
 | Decision | `cleared`, `held`, or `rejected` |
 
-The highest-evidence native profile runs through XiaobaOS Arena. A deterministic TypeScript fallback is not equivalent and must never be reported as a real three-Agent evaluation. XiaobaOS native Arena may orchestrate evaluator and target planes within one CLI execution; Barena must keep their evidence identities logically distinct and must not claim separate OS processes unless observed.
+Barena must never invoke `xiaoba arena` to evaluate XiaobaOS. Doing so makes the supposedly independent evaluator depend on the subsystem from which it was extracted, mixes evaluator and target ownership, and prevents the same workflow from being applied consistently to other runtimes.
 
-The portable verifier profile is a separate, honest release contract. It may clear deterministic artifact/final-state outcomes when the driver protocol, Barena boundary trace, workspace observation, verifier evidence, and all planned attempts are complete. It must report `evaluation_mode=portable_verifier`, `evidence_profile=boundary_verified`, `target_native_trace=false`, and `isolation=policy_only`; it must not fabricate UserCat, InspectorCat, ReviewerCat, target-native tool, or hidden-reasoning traces. Replay count alone never upgrades boundary-only evidence above medium confidence.
+The target contract is deliberately narrow: start an isolated session/workspace, send a user message through the runtime's ordinary Agent surface, collect observable output/workspace changes and any genuine native trace, then close the session. Target-reported completion never bypasses Barena's verifier. Boundary-only evidence must remain visibly labeled and must not fabricate target-native tool calls or hidden reasoning.
 
-The supported XiaobaOS 0.1.1 and 0.2.0 native Arena contracts implement UserCat planning, Inspector analysis, and Reviewer classification as XiaobaOS-owned pipeline stages; only the target execution produces native `AgentSession` traces. Barena may use those stages for native runtime calibration, but every result must record `three_evaluator_agent_sessions=false` and must not describe the current path as three independent evaluator AgentSessions.
+For XiaobaOS, Barena invokes the ordinary `chat --role ... --message ... [--skill ...]` surface. XiaobaOS owns Role, Skill, Tool, model, memory, and session execution; Barena owns UserCat/case driving, inspection, replay, verification, aggregation, and the release decision. A future adaptive UserCat campaign may use a configurable evaluator provider, but must remain outside the target runtime.
 
-The tactical amendments are evidence-driven and do not change the product category. XiaobaOS exposes native `base_skill`, `role`, and `role_skill` Arena subjects with clean runtime, evaluator stages, replay, native traces, and scorecards. OpenClaw already exposes an executable local JSON CLI boundary, while Hermes and other CLI agents can conform through a small JSON driver. Therefore XiaobaOS remains the first and highest-evidence native vertical slice, and the portable verifier becomes the public cross-runtime path without waiting for a XiaobaOS external-evaluator seam.
+This amendment is evidence-driven and does not change the product category. The previous Arena-coupled implementation proved integration mechanics but invalidated Barena's independence boundary. XiaobaOS already exposes an ordinary CLI chat surface, OpenClaw exposes a local JSON Agent surface, and Hermes/custom agents can conform through a small JSON driver; all belong behind `AgentRuntimeAdapter`.
 
-XiaobaOS currently has no subject-free `base` Arena mode. Barena must therefore require an explicit truthful baseline: a Role-only run for same-Role Skill evaluation, a previous Skill/Role version where available, or an explicit baseline Role for Role evaluation. It must return `held/blocked` when the requested baseline cannot be represented; it must never manufacture a no-op subject.
+Barena must require a truthful baseline. Initial XiaobaOS Skill evaluation holds the Role, model, task, fixture, and target configuration constant while varying only candidate Skill activation. Role comparison remains unavailable until both Role configurations can be executed through the same ordinary target contract; Barena must not fall back to Arena to preserve an old feature claim.
 
 ## Role of SkillsBench
 
@@ -130,11 +142,11 @@ Public wording should be `Barena evaluated on SkillsBench tasks` or `SkillsBench
 
 ## Runtime and Evidence Boundaries
 
-- **Native evaluation runtime:** XiaobaOS runs its UserCat, InspectorCat, and ReviewerCat stages and evaluates XiaobaOS Roles and Skills through the composite Arena contract.
-- **Portable evaluation runtime:** Barena runs the target driver, records boundary/workspace observations, executes deterministic verifiers, aggregates replay, and applies the release gate; evaluator stages are not applicable.
-- **First external target runtime:** OpenClaw is the first built-in portable adapter; Hermes and other open-source CLI Agents arrive through the portable JSON driver boundary.
-- **Barena:** owns orchestration, case identity, boundary observations, replay, verification, evidence coverage, and release artifacts.
-- **Target-native trace:** first-class when XiaobaOS Arena actually emits it; optional for external targets and never inferred or fabricated.
+- **Evaluation runtime:** Barena owns case/UserCat driving, Inspector/Reviewer logic, replay, verification, aggregation, and release decisions.
+- **XiaobaOS target runtime:** invoked only through the ordinary chat surface; its embedded Arena is not a Barena dependency.
+- **Other target runtimes:** Claude Code, Codex, and OpenClaw use built-in Runtime adapters; Hermes and other open-source CLI Agents use the portable CLI boundary until a native adapter is justified.
+- **Barena:** owns case identity, boundary observations, evaluator evidence, replay, verification, evidence coverage, and release artifacts.
+- **Target-native trace:** optional for every target and accepted only when the ordinary target execution genuinely emits it; never inferred or fabricated.
 
 Missing native evaluator support, portable driver support, target binaries, credentials, configuration, or required evidence must produce `blocked`/`held`, not simulated success.
 
@@ -187,12 +199,14 @@ GitHub stars, report views, and benchmark run counts are secondary signals; they
 
 Near-term sequence:
 
-1. Publish a transparent XiaobaOS Role/Skill calibration using the implemented native paired evaluation path.
-2. Ship the portable verifier and JSON driver contract with installable OpenClaw and Hermes/custom examples.
-3. Run a small deterministic SkillsBench-derived OpenClaw Skill comparison through the portable path.
-4. Add the optional XiaobaOS external-target evaluator seam when it can produce stronger evidence than the portable profile.
-5. Put the same release decision into GitHub CI.
-6. Expand to prompts, models, tools, memory, and runtime changes.
+1. Remove the XiaobaOS Arena dependency and ship the ordinary-chat XiaobaOS Runtime adapter.
+2. Run the SkillsBench-derived XiaobaOS Skill comparison through Barena-owned attempts and verifiers.
+3. Migrate the one-shot `TargetAdapter` compatibility API to the canonical multi-turn `AgentRuntimeAdapter`.
+4. Add a bounded Explore campaign that repeatedly drives the same Runtime contract and emits reviewable Replay Case candidates.
+5. Export Barena evaluator/boundary spans through OTLP and ingest genuine Runtime-native OTel spans when supported.
+6. Keep XiaobaOS, Claude Code, Codex, OpenClaw, and portable/Hermes targets on the same evaluator-owned workflow.
+7. Put the same release decision into GitHub CI.
+8. Expand to Role, prompt, model, tool, memory, and runtime changes once truthful baseline/candidate target configurations exist.
 
 Feature filter:
 
@@ -204,9 +218,9 @@ If the answer is not clearly yes, defer it during Phase 1.
 
 Use:
 
-- `End-to-end testing and release CI for open-source AI agents.`
+- `Agentic Eval and Release for Agent Harness Evolution.`
 - `Prove every Agent change works reliably before you ship it.`
-- `Native XiaobaOS evaluation plus a portable deterministic verifier for OpenClaw, Hermes, and other CLI agents.`
+- `Barena-owned evaluation across XiaobaOS, OpenClaw, Hermes, and custom CLI Agent targets.`
 
 Avoid positioning Barena as:
 

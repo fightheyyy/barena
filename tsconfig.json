@@ -15,5 +15,16 @@
     "sourceMap": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "runs", "subjects"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "runs",
+    "subjects",
+    "src/evaluation/live-policy.ts",
+    "src/evaluation/xiaoba-case-pack.ts",
+    "src/evaluation/xiaoba-native-case.ts",
+    "src/evaluation/xiaoba-native-input.ts",
+    "src/evaluation/xiaoba-native-runner.ts",
+    "src/evaluators/xiaoba-evaluator-runtime.ts"
+  ]
 }

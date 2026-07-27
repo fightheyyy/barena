@@ -4,13 +4,6 @@ import readline from "node:readline";
 import { loadAgentE2ECase } from "../e2e/case-runner";
 import { BoundaryTraceEvent } from "../e2e/types";
 import { loadSkillSelection, runSkillEvaluation } from "../evaluation/run-skill-evaluation";
-import { loadXiaoBaLivePolicy } from "../evaluation/live-policy";
-import {
-  createXiaoBaNativeRoleRequest,
-  createXiaoBaNativeSkillRequest,
-  loadXiaoBaNativeCase,
-} from "../evaluation/xiaoba-native-input";
-import { runXiaoBaNativeEvaluation } from "../evaluation/xiaoba-native-runner";
 import { XiaoBaNativeAttemptResult } from "../evaluation/xiaoba-native-types";
 import { listRunRecords } from "../runs/catalog";
 import { resolveTrustedRunFile } from "../runs/path-safety";
@@ -19,6 +12,7 @@ import {
   isCompleteXiaoBaCapabilityRun,
 } from "../runs/type-guards";
 import { PortableTargetAdapter } from "../targets/portable-target-adapter";
+import { XiaobaTargetAdapter } from "../targets/xiaoba-target-adapter";
 import { readNdjson } from "../utils/fs";
 import {
   AnyEvaluationResult,
@@ -38,8 +32,6 @@ export interface StartEvaluationTuiOptions {
   xiaobaCommand?: string;
   xiaobaProjectRoot?: string;
   xiaobaRolesRoot?: string;
-  livePolicyPath?: string;
-  preflightOnly?: boolean;
 }
 
 export async function startEvaluationTui(options: StartEvaluationTuiOptions = {}): Promise<void> {
@@ -134,8 +126,11 @@ async function performEffect(
   if (effect.type === "validate_case") {
     try {
       if (effect.runtime === "xiaoba") {
-        const loaded = loadXiaoBaNativeCase(effect.path);
-        await dispatch({ type: "case_valid", caseId: loaded.case_id });
+        const loaded = loadAgentE2ECase(effect.path);
+        if (loaded.caseDefinition.target.adapter !== "xiaoba" || loaded.caseDefinition.target.runtime !== "xiaobaos") {
+          throw new Error("XiaobaOS evaluation requires case target.adapter=xiaoba and target.runtime=xiaobaos");
+        }
+        await dispatch({ type: "case_valid", caseId: loaded.caseDefinition.case_id, targetRuntime: "xiaobaos" });
       } else {
         const loaded = loadAgentE2ECase(effect.path);
         if (effect.runtime === "openclaw" && loaded.caseDefinition.target.adapter !== "openclaw") {
@@ -156,35 +151,21 @@ async function performEffect(
     return;
   }
   try {
-    const live = effect.runtime === "xiaoba"
-      ? loadXiaoBaLivePolicy(requiredLivePolicyPath(options.livePolicyPath))
-      : undefined;
     const result = effect.runtime === "xiaoba"
-      ? await runXiaoBaNativeEvaluation({
-          request: effect.capability === "skill"
-            ? createXiaoBaNativeSkillRequest({
-                roleId: effect.baselineRole,
-                skillPath: effect.candidateInput,
-                casePaths: [effect.casePath],
-                attemptsPerArm: effect.attempts,
-                binaryPath: options.xiaobaCommand,
-                projectRoot: options.xiaobaProjectRoot,
-                rolesRoot: options.xiaobaRolesRoot,
-              })
-            : createXiaoBaNativeRoleRequest({
-                baselineRoleId: effect.baselineRole,
-                candidateRoleId: effect.candidateInput,
-                casePaths: [effect.casePath],
-                attemptsPerArm: effect.attempts,
-                binaryPath: options.xiaobaCommand,
-                projectRoot: options.xiaobaProjectRoot,
-                rolesRoot: options.xiaobaRolesRoot,
-              }),
-          runs_root: runsRoot,
-          accepted_scan_finding_ids: live!.policy.accepted_scan_finding_ids,
-          live_policy_binding: live!,
-          preflight_only: options.preflightOnly,
-        })
+      ? effect.capability === "role"
+        ? (() => { throw new Error("Role A/B is held during migration to Barena-owned ordinary target execution; XiaobaOS Arena fallback is disabled"); })()
+        : await runSkillEvaluation({
+            skillPath: effect.candidateInput,
+            cases: [effect.casePath],
+            attemptsPerArm: effect.attempts,
+            runsRoot,
+            targetId: "xiaobaos",
+            targetAdapter: new XiaobaTargetAdapter({
+              command: options.xiaobaCommand,
+              projectRoot: options.xiaobaProjectRoot,
+              rolesRoot: options.xiaobaRolesRoot,
+            }),
+          })
       : effect.runtime === "openclaw"
         ? await runSkillEvaluation({
             skillPath: effect.candidateInput,
@@ -283,13 +264,6 @@ function trustedFile(runRoot: string, ref: string): string | undefined {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function requiredLivePolicyPath(value: string | undefined): string {
-  if (!value) {
-    throw new Error("XiaobaOS TUI evaluation requires --live-policy <policy.json>; use --preflight-only to stop before provider execution.");
-  }
-  return value;
 }
 
 function validateRoleId(value: string): string {

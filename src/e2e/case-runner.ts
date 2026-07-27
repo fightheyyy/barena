@@ -4,6 +4,7 @@ import path from "node:path";
 import { BarenaPortableEvaluatorRuntime } from "../evaluators/portable-evaluator-runtime";
 import { renderAgentE2EReport } from "../reports/run-renderers";
 import { OpenClawTargetAdapter } from "../targets/openclaw-target-adapter";
+import { XiaobaTargetAdapter } from "../targets/xiaoba-target-adapter";
 import { validateStructuredJsonCheck } from "../verifier/artifact-verifier";
 import { ensureDir, readJson, writeJson } from "../utils/fs";
 import type {
@@ -48,9 +49,6 @@ export async function runAgentE2ECase(
   options: AgentE2ERunOptions = {}
 ): Promise<AgentE2EScorecard> {
   validateCase(caseDefinition);
-  if (caseDefinition.target.adapter === "xiaoba") {
-    throw new Error("External Agent E2E runner does not accept target.adapter=xiaoba; use XiaobaOS native evaluation");
-  }
   const evaluator = options.evaluator ?? new BarenaPortableEvaluatorRuntime();
   const targetAdapter = options.targetAdapter ?? defaultTargetAdapter(caseDefinition);
   const skill = options.skill ?? { mode: "none" };
@@ -115,6 +113,8 @@ export async function runAgentE2ECase(
   const evaluatorTraces = evaluation.evaluator_trace_refs.length === 3 &&
     evaluation.evaluator_trace_refs.every((ref) => fs.existsSync(ref));
   const workspaceObservation = observations.includes("workspace");
+  const targetNativeTrace = evaluation.attempts.length === expectedAttempts &&
+    evaluation.attempts.every((attempt) => attempt.target.native_trace_available);
   const verifierEvidence = evaluation.attempts.length === expectedAttempts && evaluation.attempts.every((attempt) =>
     attempt.assertions.length > 0 && fs.existsSync(attempt.verifier_ref)
   );
@@ -137,6 +137,7 @@ export async function runAgentE2ECase(
   const evidenceRefs = [
     ...evaluation.evaluator_trace_refs,
     ...evaluation.attempts.flatMap((attempt) => [attempt.trace_ref, attempt.verifier_ref]),
+    ...evaluation.attempts.flatMap((attempt) => attempt.target.native_trace_refs ?? []),
   ];
   return writeScorecard(runRoot, {
     scorecard_type: "barena.agent_e2e.v1",
@@ -160,7 +161,7 @@ export async function runAgentE2ECase(
       boundary_trace: boundaryTrace,
       evaluator_traces: evaluatorTraces,
       verifier_evidence: verifierEvidence,
-      target_native_trace: false,
+      target_native_trace: targetNativeTrace,
       workspace_observation: workspaceObservation,
       observations,
     },
@@ -181,6 +182,9 @@ export async function runAgentE2ECase(
 function defaultTargetAdapter(caseDefinition: AgentE2ECaseV1): TargetAdapter {
   if (caseDefinition.target.adapter === "openclaw") {
     return new OpenClawTargetAdapter({ envAllowlist: caseDefinition.target.env_allowlist });
+  }
+  if (caseDefinition.target.adapter === "xiaoba") {
+    return new XiaobaTargetAdapter({ envAllowlist: caseDefinition.target.env_allowlist });
   }
   throw new Error("target.adapter=portable requires a PortableTargetAdapter, normally via --target-command");
 }

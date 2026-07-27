@@ -63,10 +63,10 @@ function compactMasthead(color: boolean): string[] {
 function screenBody(state: EvaluationTuiState, width: number, height: number, color: boolean): string[] {
   if (state.screen === "home") {
     const descriptions = [
-      "Native same-Role Skill comparison with the strongest evidence.",
+      "Same-Role Skill comparison through XiaobaOS ordinary chat.",
       "Built-in OpenClaw adapter with boundary/workspace verification.",
       "Hermes or custom CLI through Barena's portable JSON contract.",
-      "Installed candidate Role versus an explicit baseline Role.",
+      "Role A/B (temporarily held during ordinary-target migration).",
       "Evaluation stages and the evidence-to-release path.",
       "Open a persisted decision and its trace.",
       "Files, runtimes, and safety policy required before execution.",
@@ -84,10 +84,10 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
     ];
     if (width < 50) {
       const compactDescriptions = [
-        "native trace + verifier",
+        "ordinary chat + verifier",
         "portable boundary evidence",
         "portable JSON driver",
-        "native Role comparison",
+        "Role A/B migration held",
         "evaluation DAG",
         "saved decisions + traces",
         "setup checklist",
@@ -156,7 +156,7 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
     return inputScreen(
       "E2E case",
       state.runtime === "xiaoba"
-        ? "JSON file with schema barena.xiaoba_native_case.v1."
+        ? "JSON file with schema barena.agent_e2e_case.v1 and target.adapter=xiaoba."
         : "JSON file with schema barena.agent_e2e_case.v1.",
       "Example: ./cases/release-smoke.json",
       state.casePath,
@@ -198,7 +198,7 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
       heading("Evaluation running", color),
       "",
       state.runtime === "xiaoba"
-        ? "XiaobaOS native probe → isolated baseline → isolated candidate → native trace + verifier → release gate"
+        ? "XiaobaOS chat probe → isolated baseline → isolated candidate → boundary/optional native trace + verifier → release gate"
         : `${runtimeLabel(state)} probe → fresh baseline/candidate attempts → boundary/workspace verifier → release gate`,
       "",
       `Planned target sessions: ${state.attempts * 2}. Keep this terminal open.`,
@@ -229,7 +229,7 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
       "",
       "1. Local candidate Skill directory containing SKILL.md",
       "2. Deterministic E2E case and artifact assertions",
-      "3. XiaobaOS 0.1.1/0.2.0 + Roles + LiveSafety policy for native runs",
+      "3. XiaobaOS ordinary chat CLI + an installed Role",
       "4. OpenClaw binary for the built-in portable adapter",
       "5. Executable JSON driver for Hermes/custom agents",
       "",
@@ -319,7 +319,7 @@ function dagBody(width: number, height: number, color: boolean): string[] {
       center("↓", width),
       center("Evidence → Compare → Gate", width),
       "",
-      paint("XiaobaOS uses a composite native pipeline; portable targets expose boundary evidence only.", DIM, color),
+      paint("Barena owns evaluation; targets expose boundary evidence and may also emit genuine native traces.", DIM, color),
     ];
   }
   const blockWidth = 64;
@@ -351,8 +351,8 @@ function dagBody(width: number, height: number, color: boolean): string[] {
     ...diagram,
     center(paint("CLEARED / HELD / REJECTED", GOLD, color), width),
     "",
-    paint("Logical stages only: XiaobaOS uses one composite Arena pipeline,", DIM, color),
-    paint("not three independent evaluator AgentSessions.", DIM, color),
+    paint("UserCat/Inspector/Reviewer are Barena evaluator stages; fixed replay currently uses", DIM, color),
+    paint("deterministic case driving and verification rather than fabricating agent traces.", DIM, color),
   ];
 }
 
@@ -395,24 +395,25 @@ function workflowStep(state: EvaluationTuiState): number {
 }
 
 function runtimeLabel(state: EvaluationTuiState): string {
-  if (state.result?.schema === "barena.xiaoba_capability_evaluation_result.v1") return "XiaobaOS native Arena";
+  if (state.result?.schema === "barena.xiaoba_capability_evaluation_result.v1") return "Legacy XiaobaOS Arena run (read-only)";
   if (state.result?.schema === "barena.skill_evaluation.v1") {
     const run = state.result.candidate.run_refs[0] ?? state.result.baseline.run_refs[0];
     const adapter = run?.scorecard.target.adapter;
+    if (adapter === "xiaobaos") return "XiaobaOS ordinary chat adapter";
     if (adapter === "openclaw") return "OpenClaw portable verifier";
     if (adapter?.startsWith("portable:")) return `${adapter.slice("portable:".length)} via portable JSON driver`;
     if (state.runtime === "openclaw") return "OpenClaw portable verifier";
     if (state.runtime === "portable") return `${state.portableRuntime ?? "Hermes/custom"} via portable JSON driver`;
     return "Portable verifier (target unavailable)";
   }
-  if (state.runtime === "xiaoba") return "XiaobaOS native Arena";
+  if (state.runtime === "xiaoba") return "XiaobaOS ordinary chat adapter";
   if (state.runtime === "openclaw") return "OpenClaw portable verifier";
   return `${state.portableRuntime ?? "Hermes/custom"} via portable JSON driver`;
 }
 
 function evidenceLabel(state: EvaluationTuiState): string {
   return state.runtime === "xiaoba"
-    ? "native Arena trace + verifier"
+    ? "boundary/workspace/verifier + optional genuine native trace"
     : "boundary/workspace/verifier; confidence ≤ medium";
 }
 

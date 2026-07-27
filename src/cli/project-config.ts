@@ -27,7 +27,8 @@ export type BarenaTargetProfile =
       kind: "xiaobaos";
       command: string;
       role?: string;
-      live_policy?: string;
+      project_root?: string;
+      roles_root?: string;
       env_allowlist: string[];
     }
   | {
@@ -64,7 +65,8 @@ export interface InitializeProjectConfigOptions {
   targetCommand?: string;
   agent?: string;
   role?: string;
-  livePolicy?: string;
+  projectRoot?: string;
+  rolesRoot?: string;
   envAllowlist?: string[];
   provider?: string;
   model?: string;
@@ -240,7 +242,8 @@ function createTargetProfile(
       kind: "xiaobaos",
       command: requiredText(options.targetCommand ?? "xiaoba", "XiaobaOS command"),
       ...(options.role && { role: safeId(options.role, "XiaobaOS Role ID") }),
-      ...(options.livePolicy && { live_policy: requiredText(options.livePolicy, "live policy path") }),
+      ...(options.projectRoot && { project_root: requiredText(options.projectRoot, "XiaobaOS project root") }),
+      ...(options.rolesRoot && { roles_root: requiredText(options.rolesRoot, "XiaobaOS roles root") }),
       env_allowlist: envAllowlist,
     };
   }
@@ -294,12 +297,13 @@ function validateTargetProfile(value: unknown, targetId: string): BarenaTargetPr
     };
   }
   if (kind === "xiaobaos") {
-    exactKeys(profile, ["kind", "command", "role", "live_policy", "env_allowlist"], `project config target ${targetId}`);
+    exactKeys(profile, ["kind", "command", "role", "project_root", "roles_root", "env_allowlist"], `project config target ${targetId}`);
     return {
       kind,
       command: requiredText(profile.command, `project config target ${targetId}.command`),
       ...(profile.role !== undefined && { role: safeId(profile.role, `project config target ${targetId}.role`) }),
-      ...(profile.live_policy !== undefined && { live_policy: requiredText(profile.live_policy, `project config target ${targetId}.live_policy`) }),
+      ...(profile.project_root !== undefined && { project_root: requiredText(profile.project_root, `project config target ${targetId}.project_root`) }),
+      ...(profile.roles_root !== undefined && { roles_root: requiredText(profile.roles_root, `project config target ${targetId}.roles_root`) }),
       env_allowlist: envNames(profile.env_allowlist, `project config target ${targetId}.env_allowlist`),
     };
   }

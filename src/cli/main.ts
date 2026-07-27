@@ -6,13 +6,6 @@ import type { SubjectManifest } from "../domain/types";
 import { loadAgentE2ECase, probeAgentE2E, runAgentE2ECase } from "../e2e/case-runner";
 import { runSkillEvaluation } from "../evaluation/run-skill-evaluation";
 import { listBuiltinSuites, resolveBuiltinSuite } from "../evaluation/builtin-suites";
-import { loadXiaoBaLivePolicy, type LoadedXiaoBaLivePolicy } from "../evaluation/live-policy";
-import {
-  createXiaoBaNativeRoleRequest,
-  createXiaoBaNativeRuntimeConfig,
-  createXiaoBaNativeSkillRequest,
-} from "../evaluation/xiaoba-native-input";
-import { probeXiaoBaNativeRuntime, runXiaoBaNativeEvaluation } from "../evaluation/xiaoba-native-runner";
 import { renderRunMarkdown } from "../reports/report";
 import { listRunCatalog, loadRunRecord } from "../runs/catalog";
 import { importGithubSkill } from "../subjects/github-importer";
@@ -20,6 +13,7 @@ import { importLocalSkill, loadSubjectManifest } from "../subjects/importer";
 import { scanSubjectDirectory } from "../subjects/scanner";
 import { OpenClawTargetAdapter } from "../targets/openclaw-target-adapter";
 import { PortableTargetAdapter } from "../targets/portable-target-adapter";
+import { XiaobaTargetAdapter } from "../targets/xiaoba-target-adapter";
 import { startGuide } from "./guide";
 import {
   initializeProjectConfig,
@@ -51,7 +45,7 @@ interface PackageMetadata {
 }
 
 const PACKAGE_JSON_PATH = path.resolve(__dirname, "..", "..", "package.json");
-const BOOLEAN_FLAGS = new Set(["help", "version", "color", "no-color", "snapshot", "preflight-only", "force"]);
+const BOOLEAN_FLAGS = new Set(["help", "version", "color", "no-color", "snapshot", "force"]);
 const VALUE_FLAGS = new Set([
   "id",
   "subjects-root",
@@ -73,7 +67,7 @@ const VALUE_FLAGS = new Set([
   "xiaoba-project-root",
   "roles-root",
   "pass-env",
-  "live-policy",
+  "accept-scan-findings",
   "config",
   "provider",
   "model",
@@ -117,7 +111,8 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
         targetCommand: stringFlag(parsed.flags["target-command"]) ?? aliasedFlag(parsed.flags, "xiaobaos-command", "xiaoba-command") ?? undefined,
         agent: stringFlag(parsed.flags.agent) ?? undefined,
         role: stringFlag(parsed.flags.role) ?? undefined,
-        livePolicy: stringFlag(parsed.flags["live-policy"]) ?? undefined,
+        projectRoot: aliasedFlag(parsed.flags, "xiaobaos-project-root", "xiaoba-project-root") ?? undefined,
+        rolesRoot: stringFlag(parsed.flags["roles-root"]) ?? undefined,
         envAllowlist: passEnv ? passEnv.split(",").map((value) => value.trim()).filter(Boolean) : undefined,
         provider: stringFlag(parsed.flags.provider) ?? undefined,
         model: stringFlag(parsed.flags.model) ?? undefined,
@@ -205,15 +200,11 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
       const project = optionalProjectConfig(parsed.flags);
       const targetId = stringFlag(parsed.flags.target) ?? project?.config.default_target ?? "openclaw";
       const profile = configuredProfile(project, targetId);
-      if (isXiaobaOSTarget(targetId)) {
-        const native = createXiaoBaNativeRuntimeConfig(nativeInputFlags(parsed.flags, project, profile));
-        const result = await probeXiaoBaNativeRuntime(native.config);
-        printJson(result);
-        return exitCodeForReadiness(result.status);
-      }
       const targetCommand = stringFlag(parsed.flags["target-command"]) ?? profileCommand(project, profile) ?? undefined;
       const envAllowlist = profile?.env_allowlist ?? [];
-      const targetAdapter = targetId === "openclaw"
+      const targetAdapter = isXiaobaOSTarget(targetId)
+        ? createXiaobaTargetAdapter(parsed.flags, project, profile)
+        : targetId === "openclaw"
         ? new OpenClawTargetAdapter({ command: targetCommand, envAllowlist })
         : new PortableTargetAdapter({
             command: required(targetCommand, `--target-command <driver> is required for portable target ${targetId}`),
@@ -231,11 +222,15 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
       const project = optionalProjectConfig(parsed.flags);
       const caseTargetId = loaded.caseDefinition.target.adapter === "openclaw"
         ? "openclaw"
-        : loaded.caseDefinition.target.runtime;
+        : loaded.caseDefinition.target.adapter === "xiaoba"
+          ? "xiaobaos"
+          : loaded.caseDefinition.target.runtime;
       const profile = caseTargetId ? configuredProfile(project, caseTargetId) : undefined;
       const targetCommand = stringFlag(parsed.flags["target-command"]) ?? profileCommand(project, profile) ?? undefined;
       const envAllowlist = [...new Set([...(profile?.env_allowlist ?? []), ...(loaded.caseDefinition.target.env_allowlist ?? [])])];
-      const targetAdapter = loaded.caseDefinition.target.adapter === "openclaw"
+      const targetAdapter = loaded.caseDefinition.target.adapter === "xiaoba"
+        ? createXiaobaTargetAdapter(parsed.flags, project, profile, envAllowlist)
+        : loaded.caseDefinition.target.adapter === "openclaw"
         ? new OpenClawTargetAdapter({
             command: targetCommand,
             envAllowlist,
@@ -268,43 +263,24 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
           suite: suiteName,
           targetId: target,
           outputRoot: path.join(project?.root ?? process.cwd(), ".barena", "generated"),
-          agent: profile?.kind === "openclaw" || profile?.kind === "portable" ? profile.agent : undefined,
+          agent: isXiaobaOSTarget(target)
+            ? stringFlag(parsed.flags.role) ?? (profile?.kind === "xiaobaos" ? profile.role : undefined)
+            : profile?.kind === "openclaw" || profile?.kind === "portable" ? profile.agent : undefined,
           model: project?.config.provider?.model,
           envAllowlist: profile?.env_allowlist,
         });
-        if (suite.kind === "xiaoba_case_pack") casePackPath = suite.casePackPath;
-        else externalCases = suite.casePaths;
+        externalCases = suite.casePaths;
       }
-      if (isXiaobaOSTarget(target)) {
-        requireCaseSource(casePath, casePackPath);
-        const roleId = required(
-          stringFlag(parsed.flags.role) ?? (profile?.kind === "xiaobaos" ? profile.role : undefined),
-          "--role <xiaoba-role-id> is required for --target xiaobaos"
-        );
-        const live = requiredLivePolicy(parsed.flags, project, profile);
-        const result = await runXiaoBaNativeEvaluation({
-          request: createXiaoBaNativeSkillRequest({
-            roleId,
-            skillPath,
-            ...(casePath && { casePaths: [casePath] }),
-            ...(casePackPath && { casePackPath }),
-            attemptsPerArm: resolvedAttempts(parsed.flags, project, 2),
-            ...nativeInputFlags(parsed.flags, project, profile),
-          }),
-          runs_root: resolvedRoot(parsed.flags, project, "runs"),
-          accepted_scan_finding_ids: live.policy.accepted_scan_finding_ids,
-          live_policy_binding: live,
-          preflight_only: parsed.flags["preflight-only"] === true,
-        });
-        printJson(result);
-        return exitCodeForDecision(result.decision);
+      if (casePackPath) {
+        throw new Error("--case-pack used the removed XiaobaOS Arena path; use --suite skillsbench:starter or a barena.agent_e2e_case.v1 --case instead");
       }
-      if (casePackPath) throw new Error("--case-pack is supported only for --target xiaobaos");
       const externalTarget = safeTargetId(target);
       const cases = externalCases ?? [required(casePath, `--case <case.json> or --suite <suite> is required for --target ${externalTarget}`)];
       const targetCommand = stringFlag(parsed.flags["target-command"]) ?? profileCommand(project, profile) ?? undefined;
       const envAllowlist = profile?.env_allowlist ?? [];
-      const targetAdapter = externalTarget === "openclaw"
+      const targetAdapter = isXiaobaOSTarget(externalTarget)
+        ? createXiaobaTargetAdapter(parsed.flags, project, profile, envAllowlist)
+        : externalTarget === "openclaw"
         ? new OpenClawTargetAdapter({ command: targetCommand, envAllowlist })
         : new PortableTargetAdapter({
             command: required(targetCommand, `--target-command <driver> is required for portable target ${externalTarget}`),
@@ -325,39 +301,9 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
     }
 
     if (effectiveCommand === "evaluate" && subcommand === "role") {
-      const project = optionalProjectConfig(parsed.flags);
-      const candidateRoleId = required(positionals[0], "Usage: barena evaluate role <candidate-role-id> --baseline-role <role-id> --case <case.json>|--case-pack <pack.json>");
-      const baselineRoleId = required(stringFlag(parsed.flags["baseline-role"]) ?? undefined, "--baseline-role <xiaoba-role-id> is required");
-      let casePath = stringFlag(parsed.flags.case) ?? undefined;
-      let casePackPath = stringFlag(parsed.flags["case-pack"]) ?? undefined;
-      const suiteName = stringFlag(parsed.flags.suite) ?? (!casePath && !casePackPath ? project?.config.defaults.suite : undefined);
-      if (suiteName) {
-        if (casePath || casePackPath) throw new Error("Use --suite, --case, or --case-pack; do not combine them");
-        const suite = resolveBuiltinSuite({ suite: suiteName, targetId: "xiaobaos" });
-        if (suite.kind !== "xiaoba_case_pack") throw new Error("Role evaluation requires a native SkillsBench case pack");
-        casePackPath = suite.casePackPath;
-      }
-      requireCaseSource(casePath, casePackPath);
-      const target = stringFlag(parsed.flags.target) ?? project?.config.default_target ?? "xiaobaos";
-      if (!isXiaobaOSTarget(target)) throw new Error("Role evaluation currently supports only --target xiaobaos (xiaoba is a compatibility alias)");
-      const profile = configuredProfile(project, target);
-      const live = requiredLivePolicy(parsed.flags, project, profile);
-      const result = await runXiaoBaNativeEvaluation({
-        request: createXiaoBaNativeRoleRequest({
-          baselineRoleId,
-          candidateRoleId,
-          ...(casePath && { casePaths: [casePath] }),
-          ...(casePackPath && { casePackPath }),
-          attemptsPerArm: resolvedAttempts(parsed.flags, project, 2),
-          ...nativeInputFlags(parsed.flags, project, profile),
-        }),
-        runs_root: resolvedRoot(parsed.flags, project, "runs"),
-        accepted_scan_finding_ids: live.policy.accepted_scan_finding_ids,
-        live_policy_binding: live,
-        preflight_only: parsed.flags["preflight-only"] === true,
-      });
-      printJson(result);
-      return exitCodeForDecision(result.decision);
+      throw new Error(
+        "Role A/B is temporarily held while it is migrated to Barena-owned ordinary target execution; Barena will not fall back to XiaobaOS Arena"
+      );
     }
 
     if (effectiveCommand === "show" || effectiveCommand === "scorecard") {
@@ -405,7 +351,7 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
       const selectedTarget = stringFlag(parsed.flags.target) ?? project?.config.default_target;
       const result = selectedTarget
         ? await doctorTarget(selectedTarget, parsed.flags, project)
-        : await doctor(nativeInputFlags(parsed.flags));
+        : await doctor(xiaobaAdapterFlags(parsed.flags));
       printJson(result);
       return result.ok ? EXIT_SUCCESS : EXIT_HELD;
     }
@@ -426,8 +372,6 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
           xiaobaCommand: aliasedFlag(parsed.flags, "xiaobaos-command", "xiaoba-command") ?? undefined,
           xiaobaProjectRoot: aliasedFlag(parsed.flags, "xiaobaos-project-root", "xiaoba-project-root") ?? undefined,
           xiaobaRolesRoot: stringFlag(parsed.flags["roles-root"]) ?? undefined,
-          livePolicyPath: stringFlag(parsed.flags["live-policy"]) ?? undefined,
-          preflightOnly: parsed.flags["preflight-only"] === true,
         });
       }
       return EXIT_SUCCESS;
@@ -449,13 +393,17 @@ export function readPackageVersion(): string {
   return metadata.version;
 }
 
-export async function doctor(options: ReturnType<typeof nativeInputFlags> = {}): Promise<Record<string, unknown> & { ok: boolean }> {
+export async function doctor(options: ReturnType<typeof xiaobaAdapterFlags> = {}): Promise<Record<string, unknown> & { ok: boolean }> {
   const packageMetadata = readPackageMetadata();
   const packageReady = packageMetadata.name === "barena" && typeof packageMetadata.version === "string";
   const nodeMajor = Number(process.versions.node.split(".")[0]);
   const nodeReady = Number.isInteger(nodeMajor) && nodeMajor >= minimumNodeMajor(packageMetadata.engines?.node);
-  const native = createXiaoBaNativeRuntimeConfig(options);
-  const xiaoba = await probeXiaoBaNativeRuntime(native.config);
+  const xiaoba = await new XiaobaTargetAdapter({
+    command: options.command,
+    projectRoot: options.projectRoot,
+    rolesRoot: options.rolesRoot,
+    envAllowlist: options.envAllowlist,
+  }).probe();
   const ok = packageReady && nodeReady && xiaoba.status === "ready";
 
   return {
@@ -495,38 +443,8 @@ async function doctorTarget(
   const profile = configuredProfile(project, targetId);
   const provider = providerReadiness(project?.config.provider);
   let target: { status: string };
-  let livePolicy: Record<string, unknown> | undefined;
-
   if (targetId === "xiaobaos") {
-    const native = createXiaoBaNativeRuntimeConfig(nativeInputFlags(flags, project, profile));
-    target = await probeXiaoBaNativeRuntime(native.config);
-    const policyPath = livePolicyPath(flags, project, profile);
-    if (!policyPath) {
-      livePolicy = {
-        status: "blocked",
-        detail: "XiaobaOS model-backed evaluation requires a configured live policy.",
-      };
-    } else {
-      try {
-        const binding = loadXiaoBaLivePolicy(policyPath);
-        const envNames = [binding.policy.credential_env, binding.policy.api_base_env];
-        const missing = envNames.filter((name) => !process.env[name]);
-        livePolicy = {
-          status: missing.length ? "blocked" : "ready",
-          path: policyPath,
-          provider: binding.policy.provider,
-          model: binding.policy.model,
-          credential_env: binding.policy.credential_env,
-          api_base_env: binding.policy.api_base_env,
-          missing_env: missing,
-          detail: missing.length
-            ? `Live-policy environment names are missing: ${missing.join(", ")}.`
-            : "Live policy is valid and referenced environment names are present; secret values were not retained.",
-        };
-      } catch (error) {
-        livePolicy = { status: "blocked", path: policyPath, detail: error instanceof Error ? error.message : String(error) };
-      }
-    }
+    target = await createXiaobaTargetAdapter(flags, project, profile).probe();
   } else {
     const command = stringFlag(flags["target-command"]) ?? profileCommand(project, profile) ?? undefined;
     const envAllowlist = profile?.env_allowlist ?? [];
@@ -540,8 +458,7 @@ async function doctorTarget(
     target = await adapter.probe();
   }
 
-  const liveReady = targetId !== "xiaobaos" || livePolicy?.status === "ready";
-  const ok = packageReady && nodeReady && target.status === "ready" && provider.status !== "blocked" && liveReady;
+  const ok = packageReady && nodeReady && target.status === "ready" && provider.status !== "blocked";
   return {
     ok,
     version: packageMetadata.version ?? "unknown",
@@ -562,7 +479,6 @@ async function doctorTarget(
     selected_target: targetId,
     target,
     provider,
-    ...(livePolicy && { live_policy: livePolicy }),
     git_available: commandExists("git"),
   };
 }
@@ -602,11 +518,6 @@ function required(value: string | undefined, usage: string): string {
   return value;
 }
 
-function requireCaseSource(casePath: string | undefined, casePackPath: string | undefined): void {
-  if (casePath && casePackPath) throw new Error("Use either --case or --case-pack, not both");
-  if (!casePath && !casePackPath) throw new Error("One of --case <case.json> or --case-pack <pack.json> is required");
-}
-
 function stringFlag(value: FlagValue | undefined): string | null {
   return typeof value === "string" ? value : null;
 }
@@ -642,55 +553,61 @@ function numberFlag(value: FlagValue | undefined, fallback: number): number {
   return parsed;
 }
 
-function requiredLivePolicy(
-  flags: Record<string, FlagValue>,
-  project?: LoadedProjectConfig,
-  profile?: BarenaTargetProfile
-): LoadedXiaoBaLivePolicy {
-  const policyValue = livePolicyPath(flags, project, profile);
-  if (!policyValue) {
-    throw new Error("XiaobaOS live evaluation requires --live-policy <policy.json>; use --preflight-only to stop before provider execution.");
-  }
-  return loadXiaoBaLivePolicy(policyValue);
-}
-
 function acceptedScanFindingIds(flags: Record<string, FlagValue>): string[] {
-  const policyValue = stringFlag(flags["live-policy"]);
-  if (!policyValue) return [];
-  const policyPath = path.resolve(policyValue);
-  const policy = readJson<Record<string, unknown>>(policyPath);
-  const accepted = policy.accepted_scan_finding_ids;
-  if (accepted === undefined) return [];
-  if (!Array.isArray(accepted) || !accepted.every((value) => typeof value === "string" && value.length > 0)) {
-    throw new Error(`live policy accepted_scan_finding_ids must be a string array: ${policyPath}`);
+  const value = stringFlag(flags["accept-scan-findings"]);
+  if (!value) return [];
+  const findingIds = value.split(",").map((item) => item.trim()).filter(Boolean);
+  if (!findingIds.length || findingIds.some((item) => !/^[A-Za-z0-9._:-]+$/.test(item))) {
+    throw new Error("--accept-scan-findings must be a comma-separated list of finding IDs");
   }
-  return [...new Set(accepted)];
+  return [...new Set(findingIds)];
 }
 
-function nativeInputFlags(
+function xiaobaAdapterFlags(
   flags: Record<string, FlagValue>,
   project?: LoadedProjectConfig,
   profile?: BarenaTargetProfile
 ): {
-  binaryPath?: string;
+  command?: string;
   projectRoot?: string;
   rolesRoot?: string;
-  passEnv?: string[];
+  envAllowlist?: string[];
 } {
   const passEnv = stringFlag(flags["pass-env"]);
   const configuredEnv = profile?.env_allowlist ?? [];
-  const command = aliasedFlag(flags, "xiaobaos-command", "xiaoba-command") ??
+  const command = stringFlag(flags["target-command"]) ?? aliasedFlag(flags, "xiaobaos-command", "xiaoba-command") ??
     (profile?.kind === "xiaobaos" ? profileCommand(project, profile) : undefined);
   const passEnvNames = [...new Set([
     ...configuredEnv,
     ...(passEnv ? passEnv.split(",").map((item) => item.trim()).filter(Boolean) : []),
   ])];
   return {
-    binaryPath: command ?? undefined,
-    projectRoot: aliasedFlag(flags, "xiaobaos-project-root", "xiaoba-project-root") ?? undefined,
-    rolesRoot: stringFlag(flags["roles-root"]) ?? undefined,
-    passEnv: passEnvNames.length ? passEnvNames : undefined,
+    command: command ?? undefined,
+    projectRoot: aliasedFlag(flags, "xiaobaos-project-root", "xiaoba-project-root") ??
+      (profile?.kind === "xiaobaos" && profile.project_root
+        ? project ? resolveConfigReference(project, profile.project_root) : path.resolve(profile.project_root)
+        : undefined),
+    rolesRoot: stringFlag(flags["roles-root"]) ??
+      (profile?.kind === "xiaobaos" && profile.roles_root
+        ? project ? resolveConfigReference(project, profile.roles_root) : path.resolve(profile.roles_root)
+        : undefined),
+    envAllowlist: passEnvNames.length ? passEnvNames : undefined,
   };
+}
+
+function createXiaobaTargetAdapter(
+  flags: Record<string, FlagValue>,
+  project?: LoadedProjectConfig,
+  profile?: BarenaTargetProfile,
+  extraEnvAllowlist: string[] = []
+): XiaobaTargetAdapter {
+  const config = xiaobaAdapterFlags(flags, project, profile);
+  return new XiaobaTargetAdapter({
+    command: config.command,
+    projectRoot: config.projectRoot,
+    rolesRoot: config.rolesRoot,
+    envAllowlist: [...new Set([...(config.envAllowlist ?? []), ...extraEnvAllowlist])],
+  });
 }
 
 function optionalProjectConfig(flags: Record<string, FlagValue>): LoadedProjectConfig | undefined {
@@ -712,17 +629,6 @@ function configuredProfile(project: LoadedProjectConfig | undefined, targetId: s
 function profileCommand(project: LoadedProjectConfig | undefined, profile: BarenaTargetProfile | undefined): string | null {
   if (!profile) return null;
   return project ? resolveConfigReference(project, profile.command) : profile.command;
-}
-
-function livePolicyPath(
-  flags: Record<string, FlagValue>,
-  project?: LoadedProjectConfig,
-  profile?: BarenaTargetProfile
-): string | null {
-  const explicit = stringFlag(flags["live-policy"]);
-  if (explicit) return path.resolve(explicit);
-  if (profile?.kind !== "xiaobaos" || !profile.live_policy) return null;
-  return project ? resolveConfigReference(project, profile.live_policy) : path.resolve(profile.live_policy);
 }
 
 function resolvedAttempts(flags: Record<string, FlagValue>, project: LoadedProjectConfig | undefined, fallback: number): number {
@@ -778,7 +684,7 @@ function printJson(value: unknown): void {
 }
 
 function printHelp(): void {
-  console.log(`Barena - End-to-end testing and release CI for open-source AI agents
+  console.log(`Barena - Agentic Eval and Release for Agent Harness Evolution
 
 Start here:
   barena init --target openclaw [--provider openai --model <model> --api-key-env OPENAI_API_KEY]
@@ -787,8 +693,8 @@ Start here:
   barena guide [--subjects-root path] [--runs-root path]
 
 Evaluate a change:
-  barena evaluate skill <path> --target xiaobaos --role <role-id> (--case <native-case.json> | --case-pack <pack.json>) --live-policy <policy.json> [--preflight-only]
-  barena evaluate role <candidate-role-id> --baseline-role <role-id> (--case <native-case.json> | --case-pack <pack.json>) --live-policy <policy.json> [--preflight-only]
+  barena evaluate skill <path> --target xiaobaos --role <role-id> --suite skillsbench:starter [--attempts 2]
+  barena evaluate skill <path> --target xiaobaos --role <role-id> --case <agent-case.json> [--attempts 2]
   barena evaluate skill <path> --target openclaw --case <agent-case.json> [--attempts 2]
   barena evaluate skill <path> --target hermes --target-command ./driver --case <portable-case.json> [--attempts 2]
   barena eval skill <path> --suite skillsbench:starter
@@ -805,7 +711,7 @@ Inspect results:
 Advanced:
   barena import agent <opencode|xiaoba|hermes|openclaw> [--id subject-id]
   barena scan <subject-id>
-  barena run <subject-id> [--replays 3] [--verifier path]
+  barena run <subject-id> [--replays 3] [--verifier path]  # legacy deterministic scaffold; not a real Agent eval
   barena e2e probe [--target xiaobaos|openclaw|hermes] [--target-command ./driver]
   barena e2e run <case.json> [--target-command ./driver] [--runs-root runs]
   barena list subjects

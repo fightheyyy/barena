@@ -332,7 +332,13 @@ function activateHomeItem(state: EvaluationTuiState, selected: number): Evaluati
   if (selected === 0) return begin({ ...state, selected }, "xiaoba", "skill");
   if (selected === 1) return begin({ ...state, selected }, "openclaw", "skill");
   if (selected === 2) return begin({ ...state, selected }, "portable", "skill");
-  if (selected === 3) return begin({ ...state, selected }, "xiaoba", "role");
+  if (selected === 3) return next({
+    ...state,
+    selected,
+    screen: "error",
+    error: "Role A/B is temporarily held while Barena migrates it to ordinary target execution; XiaobaOS Arena fallback is disabled.",
+    errorReturnScreen: "home",
+  });
   if (selected === 4) return next({ ...state, screen: "dag", selected: 0 });
   if (selected === 5) return next({ ...state, screen: "previous", selected: 0 });
   if (selected === 6) return next({ ...state, screen: "prerequisites", selected: 0 });

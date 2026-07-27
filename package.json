@@ -1,7 +1,7 @@
 {
   "name": "barena",
   "version": "0.1.0",
-  "description": "End-to-end testing and release CI for AI agents, skills, prompts, tools, and runtime changes.",
+  "description": "Agentic Eval and Release for auditable Agent Harness evolution.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -23,8 +23,12 @@
   },
   "files": [
     "dist",
-    "docs",
-    "examples",
+    "docs/ARCHITECTURE.md",
+    "docs/SPEC.md",
+    "docs/PLAN.md",
+    "docs/POSITIONING.md",
+    "examples/portable-case.json",
+    "examples/portable-driver.mjs",
     "calibration",
     "assets",
     "README.md",

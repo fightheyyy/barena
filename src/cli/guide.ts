@@ -5,9 +5,6 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { loadAgentE2ECase } from "../e2e/case-runner";
 import type { AgentE2ECaseV1 } from "../e2e/types";
-import { loadXiaoBaLivePolicy } from "../evaluation/live-policy";
-import { loadXiaoBaNativeCase } from "../evaluation/xiaoba-native-case";
-import type { XiaoBaNativeCaseV1 } from "../evaluation/xiaoba-native-types";
 import { importGithubSkill } from "../subjects/github-importer";
 import { importLocalSkill } from "../subjects/importer";
 import { ensureDir, writeJson } from "../utils/fs";
@@ -39,23 +36,12 @@ type TargetPlan =
       kind: "xiaobaos";
       target: "xiaobaos";
       role: string;
-      livePolicy: string;
       command?: string;
-      policySummary: {
-        provider: string;
-        model: string;
-        credentialEnv: string;
-        apiBaseEnv: string;
-        maxProviderCalls: number;
-        budgetUsd: number;
-        worstCaseUsd: number;
-      };
     };
 
-type StarterCase = AgentE2ECaseV1 | XiaoBaNativeCaseV1;
+type StarterCase = AgentE2ECaseV1;
 
-type CaseReview =
-  | {
+type CaseReview = {
       kind: "external";
       caseId: string;
       agent: string;
@@ -64,14 +50,6 @@ type CaseReview =
       isolation: AgentE2ECaseV1["isolation"]["level"];
       writableRoots: string[];
       timeoutMs: number;
-    }
-  | {
-      kind: "xiaobaos";
-      caseId: string;
-      timeoutMs: number;
-      maxTurns: number;
-      replayAttempts: number;
-      maxReplayCases: number;
     };
 
 interface CasePlan {
@@ -123,7 +101,7 @@ export async function startGuide(options: StartGuideOptions): Promise<CliExitCod
     io.write(`  Candidate: same task with ${subjectId}\n`);
     io.write(`  Case: ${casePlan.path}${casePlan.starter ? " (starter case will be created)" : ""}\n`);
     io.write(`  Attempts: ${attempts} baseline + ${attempts} candidate\n`);
-    io.write(`  Evidence: ${target.kind === "xiaobaos" ? "XiaobaOS native Arena + Barena verifier" : "boundary/workspace/verifier (confidence capped at medium)"}\n`);
+    io.write("  Evidence: boundary/workspace/verifier (confidence capped at medium); native trace is linked only when the target genuinely emits it\n");
     writeCaseReview(io, target, casePlan, attempts);
     if (casePlan.starter) {
       io.write("  Starter warning: smoke/onboarding only; it does not prove production-quality Skill effectiveness.\n");
@@ -214,30 +192,17 @@ async function askSubjectId(io: GuideIO, suggested: string): Promise<string> {
 async function askTarget(io: GuideIO, cwd: string): Promise<TargetPlan> {
   const choice = await choose(io, "Which Agent should run the task?", [
     "OpenClaw (built-in adapter)",
-    "XiaobaOS (native Arena)",
+    "XiaobaOS (ordinary chat target)",
     "Hermes or another CLI Agent (portable driver)",
   ], 1);
   if (choice === 2) {
     const role = await askRequired(io, "XiaobaOS Role ID used for both arms: ");
-    const livePolicy = resolveUserPath(await askRequired(io, "Live policy JSON path: "), cwd);
-    requiredFile(livePolicy, "Live policy");
-    const policy = loadXiaoBaLivePolicy(livePolicy).policy;
     const command = await askOptional(io, "XiaobaOS command/path [xiaoba]: ");
     return {
       kind: "xiaobaos",
       target: "xiaobaos",
       role,
-      livePolicy,
       ...(command && command !== "xiaoba" && { command: resolveCommand(command, cwd) }),
-      policySummary: {
-        provider: policy.provider,
-        model: policy.model,
-        credentialEnv: policy.credential_env,
-        apiBaseEnv: policy.api_base_env,
-        maxProviderCalls: policy.max_provider_calls,
-        budgetUsd: policy.budget_usd,
-        worstCaseUsd: policy.worst_case_usd,
-      },
     };
   }
   if (choice === 3) {
@@ -275,25 +240,34 @@ async function askCase(
   const defaultPath = path.join(cwd, "cases", `${caseId}.json`);
   const casePath = await askNewCasePath(io, cwd, defaultPath);
   if (target.kind === "xiaobaos") {
-    const starter = nativeStarterCase(caseId, prompt, artifactPath, contains);
-    return { path: casePath, starter, review: nativeCaseReview(starter) };
+    const envAllowlist = commaList(await askOptional(io, "Allowed environment variable names (optional, comma separated): "));
+    const network = await askNetworkPolicy(io, "allowlisted");
+    const starter = xiaobaStarterCase(caseId, prompt, artifactPath, contains, target, envAllowlist, network);
+    return { path: casePath, starter, review: externalCaseReview(starter) };
   }
   const settings = await askExternalStarterSettings(io, target);
   const starter = portableStarterCase(caseId, prompt, artifactPath, contains, target, settings);
   return { path: casePath, starter, review: externalCaseReview(starter) };
 }
 
-function nativeStarterCase(caseId: string, prompt: string, artifactPath: string, contains: string): XiaoBaNativeCaseV1 {
+function xiaobaStarterCase(
+  caseId: string,
+  prompt: string,
+  artifactPath: string,
+  contains: string,
+  target: Extract<TargetPlan, { kind: "xiaobaos" }>,
+  envAllowlist: string[],
+  network: AgentE2ECaseV1["isolation"]["network"]
+): AgentE2ECaseV1 {
   return {
-    schema: "barena.xiaoba_native_case.v1",
+    schema: "barena.agent_e2e_case.v1",
     case_id: caseId,
-    purpose: "effectiveness",
+    target: { adapter: "xiaoba", runtime: "xiaobaos", agent: target.role, env_allowlist: envAllowlist },
     task: { prompt },
     assertions: { artifacts: [{ path: artifactPath, exists: true, contains }] },
-    max_turns: 4,
-    replay_attempts: 1,
-    max_replay_cases: 1,
-    timeout_ms: 600_000,
+    replays: 1,
+    timeout_ms: 180_000,
+    isolation: { level: "policy_only", network, writable_roots: ["workspace"] },
   };
 }
 
@@ -385,7 +359,14 @@ function prepareSkill(
 
 function validatePreparedCase(casePath: string, target: TargetPlan): CaseReview {
   if (target.kind === "xiaobaos") {
-    return nativeCaseReview(loadXiaoBaNativeCase(casePath));
+    const loaded = loadAgentE2ECase(casePath).caseDefinition;
+    if (loaded.target.adapter !== "xiaoba" || loaded.target.runtime !== "xiaobaos") {
+      throw new Error("XiaobaOS evaluation requires case target.adapter=xiaoba and target.runtime=xiaobaos");
+    }
+    if (loaded.target.agent !== target.role) {
+      throw new Error(`XiaobaOS case target.agent must match the selected Role ${target.role}`);
+    }
+    return externalCaseReview(loaded);
   }
   const loaded = loadAgentE2ECase(casePath).caseDefinition;
   if (target.kind === "openclaw" && loaded.target.adapter !== "openclaw") {
@@ -410,17 +391,6 @@ function externalCaseReview(caseDefinition: AgentE2ECaseV1): CaseReview {
   };
 }
 
-function nativeCaseReview(caseDefinition: XiaoBaNativeCaseV1): CaseReview {
-  return {
-    kind: "xiaobaos",
-    caseId: caseDefinition.case_id,
-    timeoutMs: caseDefinition.timeout_ms ?? 600_000,
-    maxTurns: caseDefinition.max_turns ?? 4,
-    replayAttempts: caseDefinition.replay_attempts ?? 1,
-    maxReplayCases: caseDefinition.max_replay_cases ?? 1,
-  };
-}
-
 function evaluationArgs(
   skillPath: string,
   casePath: string,
@@ -430,7 +400,7 @@ function evaluationArgs(
 ): string[] {
   const args = ["evaluate", "skill", skillPath, "--target", target.target, "--case", casePath, "--attempts", String(attempts), "--runs-root", runsRoot];
   if (target.kind === "xiaobaos") {
-    args.push("--role", target.role, "--live-policy", target.livePolicy);
+    args.push("--role", target.role);
     if (target.command) args.push("--xiaobaos-command", target.command);
   } else if (target.command) {
     args.push("--target-command", target.command);
@@ -583,8 +553,8 @@ function sourceSummary(source: SkillSource): string {
 }
 
 function targetSummary(target: TargetPlan, review: CaseReview): string {
-  if (target.kind === "xiaobaos") return `XiaobaOS native, Role ${target.role}`;
-  const agent = review.kind === "external" ? review.agent : "default";
+  if (target.kind === "xiaobaos") return `XiaobaOS ordinary chat adapter, Role ${target.role}`;
+  const agent = review.agent;
   if (target.kind === "openclaw") return `OpenClaw built-in adapter, agent/profile ${agent}`;
   return `${target.target} portable driver (${target.command}), agent/profile ${agent}`;
 }
@@ -592,24 +562,12 @@ function targetSummary(target: TargetPlan, review: CaseReview): string {
 function writeCaseReview(io: GuideIO, target: TargetPlan, casePlan: CasePlan, attempts: number): void {
   const review = casePlan.review;
   io.write(`  Case ID: ${review.caseId}\n`);
-  if (review.kind === "external") {
-    io.write(`  Effective agent/profile: ${review.agent}\n`);
-    io.write(`  Environment names passed: ${review.envAllowlist.length ? review.envAllowlist.join(", ") : "none"} (values are never printed)\n`);
-    io.write(`  Network declaration: ${review.network}; isolation=${review.isolation} (policy declaration, not a hard sandbox)\n`);
-    io.write(`  Writable roots: ${review.writableRoots.join(", ")}\n`);
-    io.write(`  Timeout: ${formatDuration(review.timeoutMs)} per target session\n`);
-    io.write(`  Maximum target sessions: ${attempts} per arm / ${attempts * 2} total; paired evaluation overrides case.replays\n`);
-    return;
-  }
-  io.write(`  Native case controls: max_turns=${review.maxTurns}, replay_attempts=${review.replayAttempts}, max_replay_cases=${review.maxReplayCases}\n`);
-  io.write(`  Timeout: ${formatDuration(review.timeoutMs)} per Arena attempt\n`);
-  io.write(`  Maximum outer Arena attempts: ${attempts} per arm / ${attempts * 2} total\n`);
-  if (target.kind === "xiaobaos") {
-    const policy = target.policySummary;
-    io.write(`  Provider/model: ${policy.provider} / ${policy.model}\n`);
-    io.write(`  Credential environment names: ${policy.credentialEnv}, ${policy.apiBaseEnv}\n`);
-    io.write(`  Live policy cap: ${policy.maxProviderCalls} provider calls; budget $${policy.budgetUsd.toFixed(2)}; recorded worst case $${policy.worstCaseUsd.toFixed(2)}\n`);
-  }
+  io.write(`  Effective agent/profile: ${review.agent}\n`);
+  io.write(`  Environment names passed: ${review.envAllowlist.length ? review.envAllowlist.join(", ") : "none"} (values are never printed)\n`);
+  io.write(`  Network declaration: ${review.network}; isolation=${review.isolation} (policy declaration, not a hard sandbox)\n`);
+  io.write(`  Writable roots: ${review.writableRoots.join(", ")}\n`);
+  io.write(`  Timeout: ${formatDuration(review.timeoutMs)} per target session\n`);
+  io.write(`  Maximum target sessions: ${attempts} per arm / ${attempts * 2} total; paired evaluation overrides case.replays\n`);
 }
 
 function formatDuration(milliseconds: number): string {
