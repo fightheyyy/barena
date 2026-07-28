@@ -1,0 +1,144 @@
+{
+  "schema": "barena.poster_export.v1",
+  "generated_at": "2026-07-27T03:51:20.906Z",
+  "source_report": "../results/latest.json",
+  "source_validation_id": "skillsbench-validation-20260727035114-913afabe",
+  "dimensions": {
+    "width": 1600,
+    "height": 2200
+  },
+  "exports": [
+    {
+      "id": "black-gold",
+      "svg": "barena-skillsbench-black-gold.svg",
+      "png": "barena-skillsbench-black-gold.png"
+    },
+    {
+      "id": "paper-white",
+      "svg": "barena-skillsbench-paper-white.svg",
+      "png": "barena-skillsbench-paper-white.png"
+    },
+    {
+      "id": "midnight-blue",
+      "svg": "barena-skillsbench-midnight-blue.svg",
+      "png": "barena-skillsbench-midnight-blue.png"
+    }
+  ],
+  "exact_content": {
+    "planned_rollouts": 144,
+    "terminal_rollouts": 144,
+    "raw_numeric_rewards": 127,
+    "verifier_admitted_rollouts": 90,
+    "excluded_rollouts": 54,
+    "invalidated_numeric_rewards": 37,
+    "raw_unscored_rollouts": 17,
+    "complete_task_count": 9,
+    "paired_trials": {
+      "pair_count": 36,
+      "rollout_count": 72,
+      "task_count": 14,
+      "baseline": {
+        "passed": 14,
+        "scored": 36,
+        "planned": 36,
+        "value": 0.3888888888888889
+      },
+      "candidate": {
+        "passed": 20,
+        "scored": 36,
+        "planned": 36,
+        "value": 0.5555555555555556
+      },
+      "baseline_score": {
+        "sum": 14,
+        "scored": 36,
+        "planned": 36,
+        "mean": 0.3888888888888889
+      },
+      "candidate_score": {
+        "sum": 20,
+        "scored": 36,
+        "planned": 36,
+        "mean": 0.5555555555555556
+      },
+      "observed_lift": 0.16666666666666669,
+      "observed_score_lift": 0.16666666666666669,
+      "transitions": {
+        "both_pass": 12,
+        "both_not_pass": 14,
+        "candidate_only": 8,
+        "baseline_only": 2
+      },
+      "mcnemar_exact_p_value": 0.109375
+    },
+    "complete_tasks": {
+      "task_count": 9,
+      "pair_count": 27,
+      "baseline": {
+        "passed": 10,
+        "scored": 27,
+        "planned": 27,
+        "value": 0.37037037037037035
+      },
+      "candidate": {
+        "passed": 16,
+        "scored": 27,
+        "planned": 27,
+        "value": 0.5925925925925926
+      },
+      "baseline_score": {
+        "sum": 10,
+        "scored": 27,
+        "planned": 27,
+        "mean": 0.37037037037037035
+      },
+      "candidate_score": {
+        "sum": 16,
+        "scored": 27,
+        "planned": 27,
+        "mean": 0.5925925925925926
+      },
+      "observed_lift": 0.2222222222222222,
+      "observed_score_lift": 0.2222222222222222,
+      "decisions": {
+        "cleared": 2,
+        "held": 7,
+        "rejected": 0
+      },
+      "decision_reasons": {
+        "positive_lift": 2,
+        "no_effect": 4,
+        "capability_regression": 0,
+        "unstable_result": 3,
+        "evidence_incomplete": 0
+      }
+    },
+    "evidence_inventory": {
+      "baseline": {
+        "passed": 17,
+        "scored": 50,
+        "planned": 72,
+        "value": 0.34
+      },
+      "candidate": {
+        "passed": 21,
+        "scored": 40,
+        "planned": 72,
+        "value": 0.525
+      },
+      "decisions": {
+        "cleared": 2,
+        "held": 22,
+        "rejected": 0
+      },
+      "decision_reasons": {
+        "positive_lift": 2,
+        "no_effect": 4,
+        "capability_regression": 0,
+        "unstable_result": 3,
+        "evidence_incomplete": 15
+      }
+    }
+  },
+  "provenance": "All text, labels, and chart values are deterministically rendered from results/latest.json. No generated imagery or inferred claims are used."
+}

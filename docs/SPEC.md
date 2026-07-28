@@ -1,6 +1,6 @@
 # Barena Specification
 
-Version 2.1 — 2026-07-27
+Version 2.1 — 2026-07-28
 
 This document is authoritative for the current product boundary. Historical XiaobaOS Arena integration code and persisted result schemas may remain in the repository for migration tests and read-only run inspection, but they are not public execution paths and are excluded from the production build.
 
@@ -71,13 +71,18 @@ flowchart LR
     NewCase -.-> Replay
 ```
 
-Current implementation covers fixed Case Replay, deterministic inspection/verification, paired aggregation, and the release gate. Adaptive multi-turn UserCat exploration and agentic Inspector/Reviewer attribution are planned. Until implemented, their stages MUST be `not_applicable` rather than represented by fabricated traces.
+Current implementation covers fixed Case Replay, deterministic inspection/verification, paired aggregation, the release gate, and XiaoBaOS Role Explore. Explore executes real `user-cat`, target Role, `inspector-cat`, and `reviewer-cat` sessions through the ordinary chat surface. Fixed Replay continues to mark evaluator stages `not_applicable` when they did not actually run.
 
 ### 3.1 Locked target architecture
 
 ```mermaid
 flowchart LR
-    Commands["replay · explore · compare"] --> Control["Barena Control Plane<br/>registry · planner · policy"]
+    Human["Selection-first terminal shell"] --> Task["Task<br/>Explore · Replay · Compare"]
+    Task --> Runtime["Runtime<br/>detected + adapter-ready"]
+    Runtime --> Target["Target profile<br/>Base · optional Role"]
+    Target --> Composer["Test Composer<br/>natural objective · optional /skill"]
+    Composer --> Control["Barena Control Plane<br/>registry · planner · policy"]
+    Commands["replay · explore · compare"] --> Control
     Control --> Engines["Replay / Explore Engines<br/>User Simulator · Inspector · Reviewer"]
     Engines --> Adapter["AgentRuntimeAdapter<br/>probe · session · turn · cancel · close"]
     Adapter --> Runtimes["XiaobaOS · Claude Code · Codex<br/>OpenClaw · Portable CLI / Hermes"]
@@ -101,7 +106,7 @@ Normative details, telemetry attributes, and invariants are in `docs/ARCHITECTUR
 
 The canonical target seam is `AgentRuntimeAdapter`: probe, open session, send turn, cancel, and close. Every method preserves the Barena attempt/workspace/session boundary and receives W3C Trace Context plus allowlisted OTLP configuration.
 
-The current one-shot `TargetAdapter.execute(...)` interface remains a compatibility facade while Replay migrates. Explore MUST use the multi-turn `AgentRuntimeAdapter` lifecycle rather than adding a separate Runtime abstraction.
+The current one-shot `TargetAdapter.execute(...)` interface remains a compatibility facade while Replay migrates. XiaoBaOS Explore now uses the multi-turn `AgentRuntimeAdapter` lifecycle; subsequent Runtime integrations and Replay migration MUST reuse it rather than adding another invocation abstraction.
 
 ### 4.1 XiaobaOS
 
@@ -128,6 +133,15 @@ Barena provides an isolated working directory and an isolated snapshot of instal
 - allowlisted provider environment names.
 
 XiaobaOS native `logs/sessions/**/traces.jsonl` files are accepted only when produced within the attempt workspace by ordinary chat execution. Their presence is optional and explicitly represented by `target_native_trace`.
+
+For Explore, XiaoBaOS uses explicit full-history replay behind
+`probe/openSession/sendTurn/cancel/close`. Barena snapshots the resolved Role and
+base-Skill roots, creates separate target/evaluator workspaces, enables the
+XiaoBaOS native OTel exporter, and ingests OTLP/HTTP protobuf on a loopback
+receiver. The receiver persists redacted envelopes and a Runtime-neutral span
+NDJSON projection. XiaoBaOS CLI chat does not currently accept an explicit
+W3C parent context, so native spans are correlated by resource attributes and
+MUST NOT be claimed as children of the Barena root trace.
 
 ### 4.2 OpenClaw
 
@@ -188,7 +202,7 @@ layer = boundary
 observed_from = target_input | target_stdout | target_stderr | target_process | workspace
 ```
 
-Genuine target-native evidence remains a separate native reference. Barena MUST NOT infer hidden reasoning, tool calls, retries, or native traces from summary text.
+Genuine target-native evidence remains a separate native reference. Barena MUST NOT infer hidden reasoning, tool calls, retries, or native traces from summary text. XiaoBaOS Explore requires at least one decoded target-native OTLP span; a missing export is reported as `blocked/evidence_incomplete`.
 
 The locked target evidence model replaces proprietary behavioral trace records with OpenTelemetry spans/events exported through OTLP:
 
@@ -235,6 +249,18 @@ Missing binary, missing ordinary CLI contract, missing Role, missing credentials
 
 It validates Barena's orchestration and evidence pipeline. It is not the complete SkillsBench suite, not an official BenchFlow harness result, and not a leaderboard claim.
 
+The repository also publishes an immutable 24-task SkillsBench v1.1 method-validation
+package under `docs/benchmarks/skillsbench-v1.1/`. That experiment used BenchFlow,
+Docker, and an explicitly labelled XiaoBaOS ACP compatibility shim. Its strict primary
+comparison contains 36 same-task/same-trial pairs with verifier-admitted evidence in both
+arms. It validates paired evidence admission, deterministic verification, comparison, and
+release-gate behavior; it does not validate the newer XiaoBaOS `AgentRuntimeAdapter`,
+UserCat Explore DAG, or OTLP ingestion path.
+
+The public package MUST preserve the selection hash, upstream revision, compatibility
+boundary, evidence exclusions, matched denominator, statistical caveat, and
+non-leaderboard disclaimer. Raw provider trajectories are not published.
+
 ## 10. Security requirements
 
 - Never execute Skill install scripts during import or admission.
@@ -252,6 +278,12 @@ It validates Barena's orchestration and evidence pipeline. It is not the complet
 Current compatibility commands:
 
 ```text
+barena
+barena explore
+barena explore <scenario.json>
+barena explore --runtime xiaobaos --role <role> --task <objective>
+barena replay <case.json> [--target-command <driver>]
+barena compare <candidate-skill> (--case <case.json> | --suite <id>)
 barena init
 barena guide
 barena doctor --target <id>
@@ -267,7 +299,12 @@ barena tui
 
 The production package MUST not export or compile the legacy XiaobaOS Arena runner, native input builder, or live-policy executor.
 
-Locked target surface:
+The v0.1 `replay` and `compare` commands are product aliases over the existing
+fixed-Case runner and paired Skill evaluator. They are real execution paths,
+not placeholder menus. `e2e run` and `evaluate skill` remain compatibility
+aliases.
+
+Locked target surface after the RunSet migration:
 
 ```text
 barena replay <case-or-suite> --config <harness-config>
@@ -276,6 +313,15 @@ barena compare --baseline <run-set> --candidate <run-set>
 ```
 
 `barena replay` and `barena explore` produce comparable RunSets. `barena compare` consumes compatible RunSets or orchestrates their missing executions through those same engines. Existing `evaluate skill` and `e2e run` commands may remain compatibility aliases during migration.
+
+The zero-argument human interface is selection-first: task, detected Runtime,
+and Runtime-native target profile are bound before the user writes an open
+objective. XiaoBaOS exposes `base` as the explicit default profile plus its
+installed Roles. The objective Composer accepts an optional `/skill` qualifier;
+without it Explore evaluates the selected complete Agent configuration. The
+reviewed plan invokes the same strict engine as automation. Natural language
+and slash qualifiers do not bypass execution confirmation, static Skill
+admission, evidence requirements, or typed Scenario contracts.
 
 ## 12. Acceptance criteria
 
@@ -289,5 +335,13 @@ barena compare --baseline <run-set> --candidate <run-set>
 - Barena evaluator and adapter boundary spans export through OTLP with W3C correlation and truthful provenance.
 - Runtimes without native OTel still produce honest adapter-boundary spans; Barena never parses prose into fabricated native spans.
 - Explore can promote an evidence-backed issue only as an explicit Replay Case candidate.
+- Zero-argument `barena` selects an execution mode, detected local Runtime, and
+  explicit Base/Role profile before opening the natural-language objective
+  Composer; optional `/skill` selection is visible in the reviewed plan.
+- Runtime discovery distinguishes installed CLIs from implemented Explore adapters.
+- XiaoBaOS Explore invokes real UserCat, target Role, InspectorCat, and ReviewerCat sessions, receives and decodes native OTLP, and fails closed on malformed evaluator JSON.
+- `barena replay` executes a fixed Case through the verifier-backed replay
+  engine, and `barena compare` executes baseline/candidate Skill arms through
+  the existing paired release gate.
 - README describes implemented versus planned capability without overclaiming.
 - Build, full tests, package dry-run, and installed CLI smoke pass.

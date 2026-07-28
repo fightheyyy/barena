@@ -1,8 +1,495 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { SkillEvaluationResultV1 } from "../src/evaluation/types";
-import { initialEvaluationTuiState, reduceEvaluationTui } from "../src/tui/evaluation-model";
+import type { ExploreResultV1 } from "../src/explore";
+import {
+  AUTO_EXPLORE_MAX_TURNS,
+  initialEvaluationTuiState,
+  reduceEvaluationTui,
+  resolveRoleFromIntent,
+} from "../src/tui/evaluation-model";
 import { renderEvaluationTui } from "../src/tui/evaluation-render";
+
+test("product TUI guides task, Runtime, Role, and /skill Composer into an Auto Explore plan", () => {
+  const runtimes = [
+    {
+      id: "xiaobaos" as const,
+      display_name: "XiaoBaOS",
+      command_name: "xiaoba",
+      command_path: "/opt/homebrew/bin/xiaoba",
+      installed: true,
+      explore_support: "ready" as const,
+      detail: "installed; Explore adapter available",
+    },
+    {
+      id: "claude-code" as const,
+      display_name: "Claude Code",
+      command_name: "claude",
+      command_path: "/opt/homebrew/bin/claude",
+      installed: true,
+      explore_support: "pending" as const,
+      detail: "installed; Explore adapter pending",
+    },
+  ];
+  const roles = [
+    {
+      id: "base",
+      display_name: "Base Agent",
+      description: "XiaoBaOS default Agent without an active Role.",
+      aliases: ["default"],
+      path: "/tmp/roles",
+      evaluator_role: false,
+      base_profile: true,
+    },
+    {
+      id: "secretary-cat",
+      display_name: "SecretaryCat",
+      description: "Turns incomplete workplace requests into executable plans.",
+      aliases: ["秘书猫", "secretary"],
+      path: "/tmp/roles/secretary-cat",
+      evaluator_role: false,
+    },
+    {
+      id: "xuan-sheng-di-jun",
+      display_name: "XuanShengDiJun",
+      description: "A taste-sensitive parody Role.",
+      aliases: ["炫圣帝君", "炫神"],
+      path: "/tmp/roles/xuan-sheng-di-jun",
+      evaluator_role: false,
+    },
+  ];
+  const skills = [
+    {
+      id: "webcli",
+      display_name: "webcli",
+      description: "Explore web systems.",
+      path: "/tmp/skills/webcli",
+      scope: "base" as const,
+    },
+    {
+      id: "calendar",
+      display_name: "calendar",
+      description: "Create and update calendar events.",
+      path: "/tmp/roles/secretary-cat/skills/calendar",
+      scope: "role" as const,
+      role_id: "secretary-cat",
+    },
+  ];
+  let state = initialEvaluationTuiState([], {
+    homeMode: "product",
+    runtimes,
+    xiaobaRoles: roles,
+    xiaobaSkills: skills,
+  });
+
+  for (const width of [40, 80, 120]) {
+    const rendered = renderEvaluationTui(state, {
+      width,
+      height: 24,
+      color: false,
+    });
+    assert.match(rendered, /What are you evaluating today/);
+    assert.match(rendered, /Explore unknown behavior/);
+    assert.match(rendered, /Replay (?:a (?:known )?)?Case.*CLI ready/s);
+    assert.match(rendered, /Compare(?: releases)?.*CLI ready/s);
+    assert.doesNotMatch(rendered, /What Agent behavior should Barena/);
+    assert.doesNotMatch(rendered, /^[╭│╰]/m);
+    assert.equal(rendered.split("\n").every((line) => line.length <= width), true);
+    assert.equal(rendered.split("\n").length <= 24, true);
+  }
+  assert.doesNotMatch(
+    renderEvaluationTui(state, { width: 40, height: 24, color: false }),
+    /██████╗/
+  );
+  assert.match(
+    renderEvaluationTui(state, { width: 80, height: 24, color: false }),
+    /██████╗/
+  );
+
+  let pending = initialEvaluationTuiState([], {
+    homeMode: "product",
+    runtimes,
+    xiaobaRoles: roles,
+    xiaobaSkills: skills,
+  });
+  pending = reduceEvaluationTui(pending, {
+    type: "key",
+    name: "down",
+  }).state;
+  pending = reduceEvaluationTui(pending, {
+    type: "key",
+    name: "return",
+  }).state;
+  assert.equal(pending.screen, "home");
+  assert.equal(pending.selected, 1);
+
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "return",
+  }).state;
+  assert.equal(state.screen, "explore_runtime");
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "return",
+  }).state;
+  assert.equal(state.screen, "explore_role");
+  assert.equal(state.selected, 0);
+  assert.match(
+    renderEvaluationTui(state, { width: 80, height: 24, color: false }),
+    /Base Agent.*default/
+  );
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "down",
+  }).state;
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "return",
+  }).state;
+  assert.equal(state.exploreRole?.id, "secretary-cat");
+  assert.equal(state.screen, "explore_task");
+
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    text: "/skill",
+  }).state;
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "return",
+  }).state;
+  assert.equal(state.screen, "explore_skill");
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    text: "calendar",
+  }).state;
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "return",
+  }).state;
+  assert.equal(state.screen, "explore_task");
+  assert.equal(state.exploreSkill?.id, "calendar");
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    text: "Use vague planning requests and check whether it asks the right follow-ups",
+  }).state;
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "return",
+  }).state;
+  assert.equal(state.screen, "explore_review");
+  const review = renderEvaluationTui(state, {
+    width: 100,
+    height: 30,
+    color: false,
+  });
+  assert.match(review, /Ready to explore/);
+  assert.match(review, /XiaoBaOS \/ SecretaryCat/);
+  assert.match(review, /Focus\s+calendar Skill/);
+  assert.match(review, /Budget\s+Auto; stops when evidence is sufficient/);
+  assert.match(review, /safety cap 6/);
+  assert.match(review, /UserCat explores.*InspectorCat inspects.*ReviewerCat judges/);
+  assert.match(review, /Press Enter to run/);
+
+  const run = reduceEvaluationTui(state, {
+    type: "key",
+    name: "return",
+  });
+  assert.equal(run.state.screen, "explore_running");
+  assert.deepEqual(run.effect, {
+    type: "run_explore",
+    runtime: "xiaobaos",
+    role: "secretary-cat",
+    skill: "calendar",
+    task: "Use vague planning requests and check whether it asks the right follow-ups",
+    maxTurns: AUTO_EXPLORE_MAX_TURNS,
+    timeoutMs: 180_000,
+  });
+});
+
+test("natural intent resolves aliases and a common spoken-name variant", () => {
+  const roles = [
+    {
+      id: "xuan-sheng-di-jun",
+      display_name: "XuanShengDiJun",
+      aliases: ["炫圣帝君", "炫神"],
+      path: "/tmp/xuan",
+      evaluator_role: false,
+    },
+    {
+      id: "huang-sheng-di-jun",
+      display_name: "HuangShengDiJun",
+      aliases: ["黄圣帝君", "黄神"],
+      path: "/tmp/huang",
+      evaluator_role: false,
+    },
+  ];
+  assert.equal(
+    resolveRoleFromIntent("测一下炫圣帝君的品味有没有还原", roles)?.id,
+    "xuan-sheng-di-jun"
+  );
+  assert.equal(
+    resolveRoleFromIntent("Test xuan-sheng-di-jun taste", roles)?.id,
+    "xuan-sheng-di-jun"
+  );
+  assert.equal(
+    resolveRoleFromIntent("测一下玄圣帝君", roles)?.id,
+    "xuan-sheng-di-jun"
+  );
+});
+
+test("Explore makes Base explicit and treats no /skill as the complete Agent", () => {
+  const roles = [
+    {
+      id: "base",
+      display_name: "Base Agent",
+      path: "/tmp/roles",
+      evaluator_role: false,
+      base_profile: true,
+    },
+    {
+      id: "secretary-cat",
+      display_name: "SecretaryCat",
+      path: "/tmp/secretary",
+      evaluator_role: false,
+    },
+  ];
+  let state = initialEvaluationTuiState([], {
+    homeMode: "product",
+    runtimes: [
+      {
+        id: "xiaobaos",
+        display_name: "XiaoBaOS",
+        command_name: "xiaoba",
+        installed: true,
+        explore_support: "ready",
+        detail: "ready",
+      },
+    ],
+    xiaobaRoles: roles,
+    initialWorkflow: "explore",
+  });
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "return",
+  }).state;
+  assert.equal(state.screen, "explore_role");
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "return",
+  }).state;
+  assert.equal(state.screen, "explore_task");
+  assert.equal(state.exploreRole?.id, "base");
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    text: "测试默认 Agent 面对模糊请求时的澄清能力",
+  }).state;
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "return",
+  }).state;
+  assert.equal(state.screen, "explore_review");
+  assert.equal(state.exploreSkill, undefined);
+  const review = renderEvaluationTui(state, {
+    width: 80,
+    height: 24,
+    color: false,
+  });
+  assert.match(review, /Base Agent/);
+  assert.match(review, /Entire Agent configuration/);
+});
+
+test("Explore TUI presents human phases by default and raw actor events on demand", () => {
+  let state = {
+    ...initialEvaluationTuiState([], { homeMode: "product" }),
+    screen: "explore_running" as const,
+    exploreMaxTurns: 4,
+    exploreRole: {
+      id: "secretary-cat",
+      display_name: "SecretaryCat",
+      path: "/tmp/roles/secretary-cat",
+      evaluator_role: false,
+    },
+  };
+  const base = {
+    schema: "barena.explore_progress.v1" as const,
+    timestamp: "2026-07-27T10:00:00.000Z",
+  };
+  state = reduceEvaluationTui(state, {
+    type: "explore_progress",
+    event: {
+      ...base,
+      sequence: 1,
+      actor: "user_simulator",
+      stage: "user_simulator",
+      status: "started",
+      turn: 1,
+      summary: "Generating the next realistic user turn.",
+    },
+  }).state;
+  state = reduceEvaluationTui(state, {
+    type: "explore_progress",
+    event: {
+      ...base,
+      sequence: 2,
+      actor: "user_simulator",
+      stage: "user_simulator",
+      status: "completed",
+      turn: 1,
+      message: "我今天事情有点乱，先帮我排三个优先级。",
+      reason: "用信息不完整的请求观察目标 Agent 是否主动组织任务。",
+    },
+  }).state;
+  const userView = renderEvaluationTui(state, {
+    width: 80,
+    height: 24,
+    color: false,
+  });
+  assert.match(userView, /\[1 Explore\].*2 Inspect/);
+  assert.match(userView, /3 Judge/);
+  assert.match(userView, /ReviewerCat\s+waiting for InspectorCat findings/);
+  assert.match(userView, /UserCat\s+sent interaction 1/);
+  assert.match(userView, /我今天事情有点乱/);
+  assert.doesNotMatch(userView, /Reason:/);
+  assert.doesNotMatch(userView, /^[╭│╰]/m);
+
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "d",
+    text: "d",
+  }).state;
+  const detailView = renderEvaluationTui(state, {
+    width: 80,
+    height: 24,
+    color: false,
+  });
+  assert.match(detailView, /UserCat/);
+  assert.match(detailView, /Reason: 用信息不完整的请求/);
+  assert.match(detailView, /not hidden model reasoning/);
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "d",
+    text: "d",
+  }).state;
+
+  for (const event of [
+    {
+      ...base,
+      sequence: 3,
+      actor: "inspector" as const,
+      stage: "inspector" as const,
+      status: "completed" as const,
+      summary: "OTLP 与工作区证据完整，发现一个澄清不足问题。",
+      issue_count: 1,
+    },
+    {
+      ...base,
+      sequence: 4,
+      actor: "reviewer" as const,
+      stage: "reviewer" as const,
+      status: "started" as const,
+      summary: "Reviewing the success criteria.",
+    },
+    {
+      ...base,
+      sequence: 5,
+      actor: "reviewer" as const,
+      stage: "reviewer" as const,
+      status: "completed" as const,
+      verdict: "fail" as const,
+      summary: "任务部分完成，但没有充分确认用户约束。",
+    },
+  ]) {
+    state = reduceEvaluationTui(state, {
+      type: "explore_progress",
+      event,
+    }).state;
+  }
+  const reviewView = renderEvaluationTui(state, {
+    width: 80,
+    height: 24,
+    color: false,
+  });
+  assert.match(reviewView, /✓ 1 Explore.*✓ 2 Inspect.*\[3 Judge\]/);
+  assert.match(reviewView, /\[3 Judge\]/);
+  assert.match(reviewView, /ReviewerCat\s+verdict fail/);
+  assert.match(reviewView, /没有充分确认用户约束/);
+  assert.match(reviewView, /InspectorCat\s+1 finding\(s\) recorded/);
+});
+
+test("Explore result separates successful evaluation from target outcome and exposes conversation", () => {
+  const result = exploreResult();
+  let state = reduceEvaluationTui(
+    initialEvaluationTuiState([], { homeMode: "product" }),
+    { type: "explore_result", result }
+  ).state;
+  const rendered = renderEvaluationTui(state, {
+    width: 80,
+    height: 24,
+    color: false,
+  });
+  assert.match(rendered, /Evaluation complete/);
+  assert.match(rendered, /Target outcome\s+NEEDS IMPROVEMENT/);
+  assert.match(rendered, /Evidence\s+complete; evaluation ran successfully/);
+  assert.match(rendered, /Behavior\s+2 finding\(s\)/);
+  assert.match(rendered, /Diagnostics\s+2 informational observation\(s\)/);
+  assert.doesNotMatch(rendered, /Explore verdict\s+FAIL/);
+
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "v",
+    text: "v",
+  }).state;
+  assert.equal(state.screen, "explore_transcript");
+  const conversation = renderEvaluationTui(state, {
+    width: 80,
+    height: 24,
+    color: false,
+  });
+  assert.match(conversation, /Conversation\s+1-/);
+  assert.match(conversation, /Simulated user · interaction 1/);
+  assert.match(conversation, /请给我一句克制的朋友圈文案/);
+});
+
+test("legacy paired Skill TUI remains available through compatibility mode", () => {
+  const state = initialEvaluationTuiState([], { homeMode: "skill" });
+  assert.equal(state.screen, "home");
+  assert.match(
+    renderEvaluationTui(state, { width: 80, height: 24, color: false }),
+    /Run an agent evaluation/
+  );
+});
+
+test("product TUI keeps utility views behind home shortcuts", () => {
+  let state = initialEvaluationTuiState([], { homeMode: "product" });
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "d",
+    text: "d",
+  }).state;
+  assert.equal(state.screen, "dag");
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "escape",
+  }).state;
+  assert.equal(state.screen, "home");
+  assert.equal(state.selected, 0);
+
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "p",
+    text: "p",
+  }).state;
+  assert.equal(state.screen, "previous");
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "escape",
+  }).state;
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    text: "?",
+  }).state;
+  assert.equal(state.screen, "prerequisites");
+});
 
 test("Evaluation TUI walks through native, OpenClaw, and portable Skill paths with explicit confirmation", () => {
   let state = initialEvaluationTuiState();
@@ -77,6 +564,12 @@ test("TUI renders a responsive guided home, safe review, evidence result, and bl
   const colored = renderEvaluationTui(home, { width: 80, height: 24, color: true });
   assert.equal(colored.includes("\x1b[38;5;230m"), false);
   assert.equal(colored.includes("\x1b[38;5;220m"), true);
+  assert.match(colored, /\x1b\[1;30;48;5;220m ▸ \x1b\[0m/);
+  assert.match(colored, /\x1b\[1m1\. XiaobaOS Skill \(recommended\)\x1b\[0m/);
+  assert.match(
+    renderEvaluationTui(home, { width: 80, height: 24, color: false }),
+    />  1\. XiaobaOS Skill \(recommended\)/
+  );
 
   const result = blockedResult();
   let state = reduceEvaluationTui(home, { type: "result", result, traceEvents: [] }).state;
@@ -153,4 +646,87 @@ function blockedResult(): SkillEvaluationResultV1 {
     evidence_refs: [],
     debug_refs: [],
   };
+}
+
+function exploreResult(): ExploreResultV1 {
+  return {
+    status: "fail",
+    summary:
+      "目标 Agent 最终接近用户想要的方向，但仍然过度解释。",
+    scenario: {
+      objective: "测试风格是否克制",
+      target: {
+        runtime: "xiaobaos",
+        role: "xuan-sheng-di-jun",
+      },
+    },
+    turns: [
+      { turn: 1, target: { response: "给出多个候选和解释。" } },
+      { turn: 2, target: { response: "最终缩短为一句。" } },
+    ],
+    transcript: [
+      {
+        turn: 1,
+        role: "user",
+        actor: "user_simulator",
+        content: "请给我一句克制的朋友圈文案。",
+        timestamp: "2026-07-27T10:00:00.000Z",
+      },
+      {
+        turn: 1,
+        role: "assistant",
+        actor: "target",
+        content: "这里有五个候选，我再逐条解释。",
+        timestamp: "2026-07-27T10:00:01.000Z",
+      },
+    ],
+    inspector: {
+      status: "completed",
+      output: {
+        summary: "发现两个行为问题和两个诊断信息。",
+        evidence_complete: true,
+        issues: [
+          {
+            issue_id: "behavior-1",
+            severity: "warning",
+            family: "style",
+            summary: "固定口头禅破坏克制风格。",
+            evidence: ["turn 1"],
+          },
+          {
+            issue_id: "behavior-2",
+            severity: "warning",
+            family: "instruction_following",
+            summary: "用户要求一句话后仍然过度解释。",
+            evidence: ["turn 1"],
+          },
+          {
+            issue_id: "diagnostic-1",
+            severity: "info",
+            family: "telemetry",
+            summary: "OTel turn 属性不一致。",
+            evidence: ["span 1"],
+          },
+          {
+            issue_id: "diagnostic-2",
+            severity: "info",
+            family: "runtime",
+            summary: "Runtime 调用均成功。",
+            evidence: ["span 2"],
+          },
+        ],
+      },
+      raw_ref: "/tmp/inspector.txt",
+      process: {
+        status: "completed",
+        detail: "completed",
+        exit_code: 0,
+        signal: null,
+        duration_ms: 1,
+      },
+    },
+    evidence: {
+      evidence_complete: true,
+    },
+  } as ExploreResultV1;
 }

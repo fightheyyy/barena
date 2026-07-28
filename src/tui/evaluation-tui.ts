@@ -5,6 +5,19 @@ import { loadAgentE2ECase } from "../e2e/case-runner";
 import { BoundaryTraceEvent } from "../e2e/types";
 import { loadSkillSelection, runSkillEvaluation } from "../evaluation/run-skill-evaluation";
 import { XiaoBaNativeAttemptResult } from "../evaluation/xiaoba-native-types";
+import {
+  createAdHocExploreScenario,
+  runExploreScenario,
+} from "../explore";
+import {
+  discoverLocalRuntimes,
+  listXiaobaSkills,
+  listXiaobaTargetProfiles,
+  resolveXiaobaInstallation,
+  type LocalRuntimeDescriptor,
+  type XiaobaRoleDescriptor,
+  type XiaobaSkillDescriptor,
+} from "../runtime-adapters";
 import { listRunRecords } from "../runs/catalog";
 import { resolveTrustedRunFile } from "../runs/path-safety";
 import {
@@ -18,6 +31,8 @@ import {
   AnyEvaluationResult,
   EvaluationTuiAction,
   EvaluationTuiEffect,
+  EvaluationTuiHomeMode,
+  EvaluationTuiInitialWorkflow,
   EvaluationTuiState,
   PreviousEvaluation,
   TraceViewEvent,
@@ -29,14 +44,27 @@ import { renderEvaluationTui } from "./evaluation-render";
 export interface StartEvaluationTuiOptions {
   runsRoot?: string;
   color?: boolean;
+  homeMode?: EvaluationTuiHomeMode;
+  initialWorkflow?: EvaluationTuiInitialWorkflow;
   xiaobaCommand?: string;
   xiaobaProjectRoot?: string;
   xiaobaRolesRoot?: string;
+  xiaobaSkillsRoot?: string;
+  xiaobaEnvAllowlist?: string[];
+  exploreModel?: string;
 }
 
 export async function startEvaluationTui(options: StartEvaluationTuiOptions = {}): Promise<void> {
   const runsRoot = path.resolve(options.runsRoot ?? "runs");
-  let state = initialEvaluationTuiState(loadPreviousEvaluations(runsRoot));
+  const discovery = discoverTuiTargets(options);
+  let state = initialEvaluationTuiState(loadPreviousEvaluations(runsRoot), {
+    homeMode: options.homeMode,
+    initialWorkflow: options.initialWorkflow,
+    runtimes: discovery.runtimes,
+    xiaobaRoles: discovery.roles,
+    xiaobaSkills: discovery.skills,
+    exploreModel: options.exploreModel,
+  });
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     console.log(renderEvaluationTui(state, { color: options.color ?? false, width: process.stdout.columns }));
     return;
@@ -85,6 +113,12 @@ export async function startEvaluationTui(options: StartEvaluationTuiOptions = {}
 
     const onKeypress = (text: string, key: { name?: string; ctrl?: boolean }): void => {
       if (!active || state.screen === "running") return;
+      if (state.screen === "explore_running") {
+        if (key.name === "d") {
+          void dispatch({ type: "key", name: key.name, text });
+        }
+        return;
+      }
       keyQueue = keyQueue.then(async () => {
         if (!active) return;
         try {
@@ -150,6 +184,42 @@ async function performEffect(
     }
     return;
   }
+  if (effect.type === "run_explore") {
+    try {
+      const result = await runExploreScenario(
+        createAdHocExploreScenario({
+          role: effect.role,
+          skill: effect.skill,
+          task: effect.task,
+          max_turns: effect.maxTurns,
+          timeout_ms: effect.timeoutMs,
+          model: effect.model,
+          env_allowlist: options.xiaobaEnvAllowlist,
+        }),
+        {
+          runs_root: runsRoot,
+          on_progress: async (event) => {
+            await dispatch({ type: "explore_progress", event });
+          },
+          xiaoba: {
+            command: options.xiaobaCommand,
+            project_root: options.xiaobaProjectRoot,
+            roles_root: options.xiaobaRolesRoot,
+            skills_root: options.xiaobaSkillsRoot,
+            env_allowlist: options.xiaobaEnvAllowlist,
+          },
+        }
+      );
+      await dispatch({ type: "explore_result", result });
+    } catch (error) {
+      await dispatch({
+        type: "error",
+        message: errorMessage(error),
+        returnScreen: "explore_review",
+      });
+    }
+    return;
+  }
   try {
     const result = effect.runtime === "xiaoba"
       ? effect.capability === "role"
@@ -184,6 +254,41 @@ async function performEffect(
   } catch (error) {
     await dispatch({ type: "error", message: errorMessage(error), returnScreen: "review" });
   }
+}
+
+function discoverTuiTargets(options: StartEvaluationTuiOptions): {
+  runtimes: LocalRuntimeDescriptor[];
+  roles: XiaobaRoleDescriptor[];
+  skills: XiaobaSkillDescriptor[];
+} {
+  let runtimes = discoverLocalRuntimes();
+  const installation = resolveXiaobaInstallation({
+    command: options.xiaobaCommand,
+    project_root: options.xiaobaProjectRoot,
+    roles_root: options.xiaobaRolesRoot,
+    skills_root: options.xiaobaSkillsRoot,
+  });
+  if (installation.command_path) {
+    runtimes = runtimes.map((runtime) =>
+      runtime.id === "xiaobaos"
+        ? {
+            ...runtime,
+            installed: true,
+            command_path: installation.command_path,
+            detail: "installed; Explore adapter available",
+          }
+        : runtime
+    );
+  }
+  const roles = installation.roles_root
+    ? listXiaobaTargetProfiles(installation.roles_root)
+    : [];
+  const skills = listXiaobaSkills(installation.skills_root, roles);
+  return {
+    runtimes: runtimes.filter((runtime) => runtime.installed),
+    roles,
+    skills,
+  };
 }
 
 async function runPortableSkillEvaluation(

@@ -16,6 +16,14 @@
     "./evaluation": {
       "types": "./dist/evaluation/index.d.ts",
       "default": "./dist/evaluation/index.js"
+    },
+    "./explore": {
+      "types": "./dist/explore/index.d.ts",
+      "default": "./dist/explore/index.js"
+    },
+    "./runtime-adapters": {
+      "types": "./dist/runtime-adapters/index.d.ts",
+      "default": "./dist/runtime-adapters/index.js"
     }
   },
   "bin": {
@@ -27,8 +35,10 @@
     "docs/SPEC.md",
     "docs/PLAN.md",
     "docs/POSITIONING.md",
+    "docs/benchmarks/skillsbench-v1.1",
     "examples/portable-case.json",
     "examples/portable-driver.mjs",
+    "examples/xiaoba-explore-scenario.json",
     "calibration",
     "assets",
     "README.md",
@@ -77,6 +87,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "figlet": "^1.11.0"
+    "figlet": "^1.11.0",
+    "protobufjs": "^7.6.5"
   }
 }

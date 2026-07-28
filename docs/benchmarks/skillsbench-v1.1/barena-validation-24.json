@@ -1,0 +1,192 @@
+{
+  "schema": "barena.skillsbench_selection.v1",
+  "selection_id": "skillsbench-v1.1-validation-24",
+  "dataset": {
+    "name": "skillsbench",
+    "version": "1.1",
+    "git_url": "https://github.com/benchflow-ai/skillsbench.git",
+    "git_commit": "b63b7b2850226b6aa4fb5929a8c1ac7bc4d9a6af",
+    "license": "Apache-2.0"
+  },
+  "selection_policy": {
+    "tasks_per_category": 3,
+    "trials_per_arm": 3,
+    "arms": [
+      "no-skill",
+      "with-skill"
+    ],
+    "reference_source": "https://huggingface.co/datasets/benchflow/skillsbench-leaderboard/blob/main/analysis/skillsbench/v1.1/official-selected/coverage_by_task_model_mode.csv",
+    "reference_scope": "Strict audited release-aligned results for Gemini 3.5 Flash, MiniMax M3, and Opus 4.8.",
+    "note": "Reference lift guided stratified selection only; the upstream verifier is the XiaoBaOS run truth."
+  },
+  "tasks": [
+    {
+      "task_id": "dapt-intrusion-detection",
+      "category": "cybersecurity",
+      "difficulty": "hard",
+      "reference_direction": "positive",
+      "reference_lift": 0.889
+    },
+    {
+      "task_id": "setup-fuzzing-py",
+      "category": "cybersecurity",
+      "difficulty": "medium",
+      "reference_direction": "neutral",
+      "reference_lift": 0.0
+    },
+    {
+      "task_id": "fix-druid-loophole-cve",
+      "category": "cybersecurity",
+      "difficulty": "hard",
+      "reference_direction": "negative",
+      "reference_lift": -0.333
+    },
+    {
+      "task_id": "weighted-gdp-calc",
+      "category": "finance-economics",
+      "difficulty": "medium",
+      "reference_direction": "positive",
+      "reference_lift": 0.333
+    },
+    {
+      "task_id": "reserves-at-risk-calc",
+      "category": "finance-economics",
+      "difficulty": "medium",
+      "reference_direction": "neutral",
+      "reference_lift": 0.0
+    },
+    {
+      "task_id": "invoice-fraud-detection",
+      "category": "finance-economics",
+      "difficulty": "hard",
+      "reference_direction": "negative",
+      "reference_lift": -0.056
+    },
+    {
+      "task_id": "drone-planning-control",
+      "category": "industrial-physical-systems",
+      "difficulty": "medium",
+      "reference_direction": "positive",
+      "reference_lift": 0.667
+    },
+    {
+      "task_id": "3d-scan-calc",
+      "category": "industrial-physical-systems",
+      "difficulty": "hard",
+      "reference_direction": "neutral",
+      "reference_lift": 0.0
+    },
+    {
+      "task_id": "hvac-control",
+      "category": "industrial-physical-systems",
+      "difficulty": "medium",
+      "reference_direction": "negative",
+      "reference_lift": -0.238
+    },
+    {
+      "task_id": "bike-rebalance",
+      "category": "mathematics-or-formal-reasoning",
+      "difficulty": "medium",
+      "reference_direction": "positive",
+      "reference_lift": 0.333
+    },
+    {
+      "task_id": "civ6-adjacency-optimizer",
+      "category": "mathematics-or-formal-reasoning",
+      "difficulty": "hard",
+      "reference_direction": "neutral",
+      "reference_lift": 0.0
+    },
+    {
+      "task_id": "exam-block-sequencing",
+      "category": "mathematics-or-formal-reasoning",
+      "difficulty": "hard",
+      "reference_direction": "negative",
+      "reference_lift": -0.333
+    },
+    {
+      "task_id": "threejs-structure-parser",
+      "category": "media-content-production",
+      "difficulty": "medium",
+      "reference_direction": "positive",
+      "reference_lift": 0.833
+    },
+    {
+      "task_id": "mario-coin-counting",
+      "category": "media-content-production",
+      "difficulty": "medium",
+      "reference_direction": "positive",
+      "reference_lift": 0.5
+    },
+    {
+      "task_id": "video-silence-remover",
+      "category": "media-content-production",
+      "difficulty": "hard",
+      "reference_direction": "neutral",
+      "reference_lift": 0.0
+    },
+    {
+      "task_id": "lake-warming-attribution",
+      "category": "natural-science",
+      "difficulty": "medium",
+      "reference_direction": "positive",
+      "reference_lift": 0.714
+    },
+    {
+      "task_id": "quantum-numerical-simulation",
+      "category": "natural-science",
+      "difficulty": "medium",
+      "reference_direction": "neutral",
+      "reference_lift": 0.0
+    },
+    {
+      "task_id": "glm-lake-mendota",
+      "category": "natural-science",
+      "difficulty": "hard",
+      "reference_direction": "negative",
+      "reference_lift": -0.111
+    },
+    {
+      "task_id": "sales-pivot-analysis",
+      "category": "office-white-collar",
+      "difficulty": "medium",
+      "reference_direction": "positive",
+      "reference_lift": 0.5
+    },
+    {
+      "task_id": "citation-check",
+      "category": "office-white-collar",
+      "difficulty": "medium",
+      "reference_direction": "neutral",
+      "reference_lift": 0.0
+    },
+    {
+      "task_id": "paper-anonymizer",
+      "category": "office-white-collar",
+      "difficulty": "medium",
+      "reference_direction": "negative",
+      "reference_lift": -0.1
+    },
+    {
+      "task_id": "llm-prefix-cache-replay",
+      "category": "software-engineering",
+      "difficulty": "medium",
+      "reference_direction": "positive",
+      "reference_lift": 0.889
+    },
+    {
+      "task_id": "jax-computing-basics",
+      "category": "software-engineering",
+      "difficulty": "medium",
+      "reference_direction": "neutral",
+      "reference_lift": 0.0
+    },
+    {
+      "task_id": "fix-build-agentops",
+      "category": "software-engineering",
+      "difficulty": "easy",
+      "reference_direction": "negative",
+      "reference_lift": -0.333
+    }
+  ]
+}

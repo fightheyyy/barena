@@ -57,7 +57,7 @@ flowchart LR
     Review --> NewCase
 ```
 
-当前版本已经落地左侧的固定 Case Replay、配对 Skill A/B、Artifact Verifier、证据持久化和发布门禁。UserCat 驱动的探索式多轮 E2E、Inspector/Reviewer 自动归因仍是下一阶段；当前固定 Replay 会诚实地把这些 evaluator stages 标记为 `not_applicable`，不会伪造多 Agent Trace。
+当前版本已经落地两条执行路径：固定 Case Replay 用于保护已知能力；XiaoBaOS Explore 由真实 `user-cat` 驱动目标 Role 多轮交互，再由 `inspector-cat` 和 `reviewer-cat` 基于边界、Artifact 与原生 OTel 证据给出单次 `pass / fail / blocked / unsafe` 结论。只有 baseline/candidate Compare 才能生成 `cleared / held / rejected` 发布决策。
 
 ## 适用场景
 
@@ -81,11 +81,57 @@ flowchart LR
 | OpenClaw 本地 subprocess 适配器 | 可用 |
 | Hermes / custom CLI JSON Driver | 契约与测试夹具可用；需要目标侧 Driver |
 | 目标 Runtime 原生 Trace | 可选；仅在普通目标执行真实产出时引用 |
-| `AgentRuntimeAdapter` 多轮统一接口 | 架构已锁定；待从当前 one-shot `TargetAdapter` 迁移 |
-| OpenTelemetry / OTLP 统一 Trace | 架构已锁定；当前 boundary NDJSON 待迁移 |
-| SkillsBench 派生校准 | 1 个固定任务 starter，可验证链路，不是官方成绩 |
+| `barena` 选择式全屏 TUI | 可用；先选任务，再选 Runtime、Base/Role 与自然语言测试目标 |
+| XiaoBaOS 多轮 `AgentRuntimeAdapter` | 可用；`probe/openSession/sendTurn/cancel/close` |
+| XiaoBaOS Role 枚举与 Explore | 可用；真实 UserCat → 目标 Role → InspectorCat → ReviewerCat |
+| OpenTelemetry / OTLP 统一 Trace | Explore 可用；内置 OTLP/HTTP 接收并解码为统一 span NDJSON |
+| 三个产品 CLI 入口 | `explore`、`replay`、`compare` 均可执行；Replay/Compare 的交互式 TUI 配置待后续补齐 |
+| SkillsBench 派生 starter | 1 个固定任务，可通过当前 CLI 验证评测链路，不是官方成绩 |
+| SkillsBench v1.1 公开方法验证 | 24 个任务、144 次终态运行；36 个严格匹配 pair，报告与海报已公开 |
 | XiaobaOS Role A/B | 暂时 held；迁移到普通目标契约中，禁止回退 Arena |
-| UserCat 探索式多轮 E2E | 设计中，尚未作为已完成能力宣传 |
+| Claude Code / Codex / OpenClaw Explore | 可检测本机安装；多轮 Explore adapter 待实现 |
+
+## 公开验证：Barena × SkillsBench v1.1
+
+<p align="center">
+  <img
+    src="docs/benchmarks/skillsbench-v1.1/poster/barena-skillsbench-black-gold.png"
+    width="760"
+    alt="Barena SkillsBench verifier-backed validation poster"
+  />
+</p>
+
+Barena 在 SkillsBench v1.1 的 24 个公开任务上，以同一个 XiaoBaOS Runtime
+分别执行无 Skill baseline 和启用上游 Skill 的 candidate，每个 arm 独立运行
+3 次，共得到 144 次终态运行。任务是否通过只由 SkillsBench 的确定性 Verifier
+决定，不采用 Agent 自述。
+
+严格证据审计后，90 次运行具有可采信 Verifier 结果，其中 36 个
+same-task / same-trial pair 可以等分母比较：
+
+| 可比 pair | Baseline | Candidate | 配对差值 | Candidate-only | Baseline-only |
+|---:|---:|---:|---:|---:|---:|
+| 36 | 14/36（38.9%） | 20/36（55.6%） | +16.7 pp | 8 | 2 |
+
+方向为正，但 exact McNemar `p=0.109`，不能宣称统计显著。只有 9 个任务拥有完整的
+三对三证据，可以进入任务级门禁：2 个 `cleared`、7 个 `held`、0 个
+`rejected`。另外 15 个任务因证据不完整而不进入效果结论；54 次无效或未评分
+运行也没有被拿来凑分母。
+
+这个实验验证的不是“小八一定更强”，而是 Barena 的三条核心方法成立：
+
+1. Verifier 证据不完整时，结果不会被包装成成功。
+2. baseline / candidate 只在同任务、同 trial、双边证据都有效时比较。
+3. 正向趋势、稳定提升和证据不足会分别进入结论，不会被混成一个平均分。
+
+[实验方法与边界](docs/benchmarks/skillsbench-v1.1/README.md) ·
+[完整人类可读报告](docs/benchmarks/skillsbench-v1.1/results/latest.md) ·
+[机器可读证据索引](docs/benchmarks/skillsbench-v1.1/results/latest.json) ·
+[海报生成说明](docs/benchmarks/skillsbench-v1.1/poster/README.md)
+
+这是使用 BenchFlow 与明确标注的 XiaoBaOS ACP compatibility shim 完成的
+SkillsBench-derived 方法验证，不是官方 SkillsBench leaderboard 成绩，也不用于
+证明当前 Explore 的 OTLP 链路。
 
 ## 框架架构
 
@@ -166,7 +212,90 @@ npm link
 
 要求 Node.js 18 或更高版本。
 
-## 最快跑通：SkillsBench → XiaobaOS
+## 最快跑通：Explore 一个 XiaoBaOS Role
+
+本机安装并配置好 XiaoBaOS 后，直接运行：
+
+```bash
+barena
+```
+
+`barena` 和无参数的 `barena explore` 复用同一套全屏 TUI、键盘操作与审阅页。标准 80×24 终端会保留完整的 `BARENA` ASCII 首页；主内容使用无外框的开放画布，产品菜单只显示 Explore / Replay / Compare，DAG、历史运行和环境检查分别通过 `d`、`p`、`?` 打开。Explore 运行时会按 Explore / Inspect / Judge 三个阶段显示 UserCat、目标 Agent、InspectorCat 和 ReviewerCat 的真实可观察状态；详细视图只展示结构化运行事件，不展示或猜测模型内部思考。交互入口会按下面的顺序推进：
+
+```text
+Barena
+  → 选择 Explore
+  → 扫描并选择本机 Runtime
+  → 选择 XiaoBaOS Base（默认）或已安装 Role
+  → 用自然语言描述想测试的行为
+      └─ 可选：输入 /skill 搜索并绑定一个已安装 Skill
+  → 审阅目标、测试焦点、自动预算和证据计划
+  → Enter 运行
+```
+
+Barena 会识别本机的 XiaoBaOS、OpenClaw、Claude Code、Codex 和 Hermes CLI，并把“已安装”与“Explore adapter 已可用”分开显示。当前只有 XiaoBaOS 是首个深度适配的 Explore Runtime；其他 Runtime 即使已安装也会标记为 `adapter pending`，不会假装能够运行。
+
+不使用 `/skill` 时，Barena 测试所选 Base/Role 的完整 Agent 配置；使用 `/skill` 只改变本次 Explore 的测试焦点，不会进入另一套工作流。交互模式由 UserCat 自动决定何时继续或结束，最多进行 6 次用户交互，不再要求使用者先理解并填写轮数。
+
+等价的非交互命令适合脚本和 CI：
+
+```bash
+barena explore \
+  --runtime xiaobaos \
+  --role secretary-cat \
+  --skill planning \
+  --task "我今天事情很乱，帮我排出真正可执行的优先级" \
+  --max-turns 4
+```
+
+如果 XiaoBaOS 不是标准全局安装，可以显式指定：
+
+```bash
+barena explore \
+  --runtime xiaobaos \
+  --role secretary-cat \
+  --task "帮我把含糊需求收敛成今天能执行的计划" \
+  --xiaobaos-command /path/to/xiaoba \
+  --xiaobaos-project-root /path/to/XiaoBa-CLI \
+  --roles-root /path/to/XiaoBa-CLI/roles
+```
+
+一次 Explore 最多执行 `2 × max_turns + 2` 次模型调用：每轮 UserCat 与目标 Agent 各一次，结束后 InspectorCat 与 ReviewerCat 各一次。交互 TUI 默认采用最多 6 轮的 Auto 预算，并在运行前明确显示调用上限；自动化命令仍可通过 `--max-turns` 收紧预算。
+
+Explore 结果写入：
+
+```text
+runs/explore-.../
+  scenario.json
+  runtime/
+    roles/
+    skills/
+    snapshot-manifest.json
+  workspaces/
+    target/
+    user-simulator/
+    inspector/
+    reviewer/
+  traces/boundary.ndjson
+  telemetry/otlp/
+    envelopes/*.pb
+    spans.ndjson
+    manifest.json
+  evaluator/
+    user-simulator/
+    inspector/issues.json
+    reviewer/scorecard.json
+  replay-candidates.json
+  explore-result.json
+  reports/report.json
+  reports/report.md
+```
+
+XiaoBaOS 原生 OTLP 是当前 Explore 的必需证据。Barena 接收标准 OTLP/HTTP protobuf，解码为 OTel span，并按 run、scenario、actor、Role、session 与 turn 关联；没有收到目标 Runtime span 时结果会是 `blocked`，不会从 stdout 猜测工具调用或伪造 Trace。
+
+运行所需的 Role / Skill 会先复制为隔离快照，并校验前后 fingerprint。Barena 会在执行前和报告落盘前对整个 run 做 Secret 扫描与等长覆盖脱敏；无法安全扫描的文件会使证据不完整，而不是静默放行。脱敏统计保存在 `explore-result.json` 的 `evidence.secret_redaction` 中。
+
+## SkillsBench → XiaobaOS Skill Replay
 
 Barena 内置一个从 [SkillsBench](https://github.com/benchflow-ai/skillsbench) `dialogue-parser` 任务派生的最小校准集。它固定了上游 commit、任务文件哈希、适配说明、fixture 和结构化 JSON/图验证器。
 
@@ -332,8 +461,9 @@ runs/skill-eval-.../
 
 核心证据分层：
 
-- **Boundary Trace（当前）**：Barena 观察到的输入、stdout/stderr、进程状态和 workspace diff；目标架构迁移为带 provenance 的 OTel spans。
-- **Target-native Trace**：普通目标执行真实通过 OTLP 导出时才接入；缺失不会被推断或伪造。
+- **Boundary Trace**：Barena 观察到的输入、stdout/stderr、进程状态和 workspace diff。
+- **OpenTelemetry Trace**：Explore 内置 OTLP/HTTP 接收端，保存原始 envelope 并生成统一 span NDJSON；每条证据保留 Runtime-native provenance。
+- **Target-native Trace**：只有普通目标执行真实通过 OTLP 导出时才接入；缺失不会被推断或伪造。XiaoBaOS Explore 当前要求目标 native span 可用。
 - **Artifact Evidence**：文件存在性、内容、JSON 结构和图约束等确定性验证结果。
 - **Scorecard**：每次 Attempt 的结果、整体成功率、稳定性、lift 和最终发布决策。
 
@@ -349,15 +479,30 @@ runs/skill-eval-.../
 
 ## CLI
 
-锁定的目标命令是：
+当前 v0.1 的三个产品命令是：
 
 ```text
-barena replay <case-or-suite> --config <harness-config>
-barena explore <scenario> --config <harness-config>
-barena compare --baseline <run-set> --candidate <run-set>
+barena explore <scenario.json>
+barena replay <case.json> [--target-command ./driver]
+barena compare <candidate-skill> (--case <case.json> | --suite skillsbench:starter)
 ```
 
-当前版本仍使用下面的兼容命令；迁移期间不会把目标命令写成已经实现：
+`replay` 复用现有固定 Case、独立 workspace/session、Artifact Verifier 与
+replay aggregation；`compare` 复用现有 no-Skill baseline / candidate Skill
+配对引擎并输出 `cleared / held / rejected`。旧的 `e2e run` 和
+`evaluate skill` 继续作为兼容别名。
+
+当前已经实现 `barena` 全屏产品入口和 `barena explore` 的 XiaoBaOS
+交互路径；`barena tui` 是同一产品 TUI 的兼容入口：
+
+```text
+barena
+barena explore
+barena explore <scenario.json>
+barena explore --runtime xiaobaos --role <role> --task <objective>
+```
+
+下面的兼容命令继续可用：
 
 ```text
 barena guide
@@ -387,9 +532,12 @@ npm run check
 npm run pack:dry-run
 ```
 
-回归测试覆盖 CLI/TUI、静态准入、路径与 symlink 防护、OpenClaw/Portable Driver、XiaobaOS ordinary-chat adapter、paired Skill evaluation、Artifact Verifier、run catalog 和打包入口。
+回归测试覆盖选择式交互入口、XiaoBaOS Base/Role 多轮 Explore、UserCat/Inspector/Reviewer 严格 JSON、OTLP protobuf 接收与 span 解码、CLI/TUI、静态准入、路径与 symlink 防护、OpenClaw/Portable Driver、paired Skill evaluation、Artifact Verifier、run catalog 和打包入口。
 
-项目仍处于早期版本。当前可以把它当作“可运行的 Harness 变更评测内核”，不应把尚未发布的 UserCat 自动探索或完整 SkillsBench 成绩写成已完成事实。
+项目仍处于早期版本。当前可以把它当作“XiaoBaOS Explore + 固定 Replay +
+Skill Compare 发布门禁”的可运行 v0.1；Claude Code、Codex、OpenClaw 的
+Explore 深度适配、Replay/Compare 的交互式 TUI 配置，以及最终的
+RunSet-to-RunSet Compare 属于后续版本。
 
 ## License
 

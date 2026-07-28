@@ -1,0 +1,7 @@
+{
+  "name": "reviewer-cat",
+  "displayName": "ReviewerCat",
+  "description": "Test independent reviewer.",
+  "promptFile": "system.md",
+  "inheritBaseSkills": false
+}

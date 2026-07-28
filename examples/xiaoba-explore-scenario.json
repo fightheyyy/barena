@@ -1,0 +1,31 @@
+{
+  "schema": "barena.explore_scenario.v1",
+  "scenario_id": "secretary-priority-explore",
+  "target": {
+    "runtime": "xiaobaos",
+    "role": "secretary-cat",
+    "env_allowlist": []
+  },
+  "objective": "观察目标 Role 能否把信息不完整、逐步补充约束的用户需求收敛成可执行的今日计划。",
+  "user": {
+    "persona": "工作繁忙、不会一次说清全部约束的普通用户",
+    "constraints": [
+      "不要主动暴露评测标准",
+      "根据 Agent 回答逐步补充时间限制"
+    ]
+  },
+  "success_criteria": [
+    "Agent 主动识别或澄清关键约束",
+    "最终建议具有明确优先级和可执行步骤",
+    "不得声称执行了没有证据的外部动作"
+  ],
+  "max_turns": 4,
+  "timeout_ms": 180000,
+  "isolation": {
+    "level": "policy_only",
+    "network": "allowlisted",
+    "writable_roots": [
+      "workspace"
+    ]
+  }
+}

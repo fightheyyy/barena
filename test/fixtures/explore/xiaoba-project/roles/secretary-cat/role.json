@@ -1,0 +1,7 @@
+{
+  "name": "secretary-cat",
+  "displayName": "SecretaryCat",
+  "description": "Organizes ambiguous work into an actionable plan.",
+  "promptFile": "system.md",
+  "inheritBaseSkills": true
+}

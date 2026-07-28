@@ -1,0 +1,7 @@
+{
+  "name": "inspector-cat",
+  "displayName": "InspectorCat",
+  "description": "Test evidence inspector.",
+  "promptFile": "system.md",
+  "inheritBaseSkills": false
+}

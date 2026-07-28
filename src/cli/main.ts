@@ -11,9 +11,15 @@ import { listRunCatalog, loadRunRecord } from "../runs/catalog";
 import { importGithubSkill } from "../subjects/github-importer";
 import { importLocalSkill, loadSubjectManifest } from "../subjects/importer";
 import { scanSubjectDirectory } from "../subjects/scanner";
+import {
+  createAdHocExploreScenario,
+  loadExploreScenario,
+  runExploreScenario,
+} from "../explore";
 import { OpenClawTargetAdapter } from "../targets/openclaw-target-adapter";
 import { PortableTargetAdapter } from "../targets/portable-target-adapter";
 import { XiaobaTargetAdapter } from "../targets/xiaoba-target-adapter";
+import type { XiaobaOSRuntimeAdapterConfig } from "../runtime-adapters";
 import { startGuide } from "./guide";
 import {
   initializeProjectConfig,
@@ -75,6 +81,33 @@ const VALUE_FLAGS = new Set([
   "api-base-env",
   "agent",
   "suite",
+  "runtime",
+  "task",
+  "scenario-id",
+  "max-turns",
+  "timeout",
+  "skill",
+]);
+const KNOWN_COMMANDS = new Set([
+  "compare",
+  "config",
+  "doctor",
+  "e2e",
+  "evaluate",
+  "explore",
+  "guide",
+  "help",
+  "import",
+  "init",
+  "list",
+  "replay",
+  "report",
+  "run",
+  "scan",
+  "scorecard",
+  "show",
+  "tui",
+  "version",
 ]);
 
 export async function runCli(argv: string[]): Promise<CliExitCode> {
@@ -86,16 +119,29 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
       console.log(readPackageVersion());
       return EXIT_SUCCESS;
     }
-    if (parsed.flags.help || command === "help") {
-      printHelp();
+    if (parsed.flags.help) {
+      if (!command) printHelp();
+      else if (KNOWN_COMMANDS.has(effectiveCommand)) printCommandHelp(effectiveCommand);
+      else throw new Error(`Unknown command: ${command}`);
+      return EXIT_SUCCESS;
+    }
+    if (command === "help") {
+      const topic = subcommand === "eval" ? "evaluate" : subcommand;
+      if (!topic) printHelp();
+      else if (KNOWN_COMMANDS.has(topic)) printCommandHelp(topic);
+      else throw new Error(`Unknown command: ${topic}`);
       return EXIT_SUCCESS;
     }
     if (!command) {
       if (process.stdin.isTTY && process.stdout.isTTY) {
-        return await startGuide({
-          execute: runCli,
-          subjectsRoot: stringFlag(parsed.flags["subjects-root"]) ?? undefined,
-          runsRoot: stringFlag(parsed.flags["runs-root"]) ?? undefined,
+        const project = optionalProjectConfig(parsed.flags);
+        const profile = configuredProfile(project, "xiaobaos");
+        const xiaoba = createXiaobaRuntimeConfig(parsed.flags, project, profile);
+        await startEvaluationTui({
+          runsRoot: resolvedRoot(parsed.flags, project, "runs"),
+          homeMode: "product",
+          initialWorkflow: "home",
+          ...tuiXiaobaOptions(xiaoba, project?.config.provider?.model),
         });
       } else {
         printHelp();
@@ -146,6 +192,91 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
         subjectsRoot: stringFlag(parsed.flags["subjects-root"]) ?? undefined,
         runsRoot: stringFlag(parsed.flags["runs-root"]) ?? undefined,
       });
+    }
+
+    if (effectiveCommand === "explore") {
+      const project = optionalProjectConfig(parsed.flags);
+      const profile = configuredProfile(project, "xiaobaos");
+      const hasDirectInput =
+        Boolean(subcommand) ||
+        stringFlag(parsed.flags.role) !== null ||
+        stringFlag(parsed.flags.task) !== null;
+      if (!hasDirectInput && process.stdin.isTTY && process.stdout.isTTY) {
+        const xiaoba = createXiaobaRuntimeConfig(parsed.flags, project, profile);
+        await startEvaluationTui({
+          runsRoot: resolvedRoot(parsed.flags, project, "runs"),
+          homeMode: "product",
+          initialWorkflow: "explore",
+          ...tuiXiaobaOptions(xiaoba, project?.config.provider?.model),
+        });
+        return EXIT_SUCCESS;
+      }
+      const runtime =
+        stringFlag(parsed.flags.runtime) ??
+        stringFlag(parsed.flags.target) ??
+        "xiaobaos";
+      if (!isXiaobaOSTarget(runtime)) {
+        throw new Error(
+          `Runtime ${runtime} may be installed, but its Barena Explore adapter is not implemented yet.`
+        );
+      }
+      const scenario = subcommand
+        ? loadExploreScenario(subcommand)
+        : createAdHocExploreScenario({
+            role:
+              stringFlag(parsed.flags.role) ??
+              (profile?.kind === "xiaobaos" ? profile.role : undefined) ??
+              required(
+                undefined,
+                "Usage: barena explore --runtime xiaobaos --role <role> --task <objective>"
+              ),
+            task: required(
+              stringFlag(parsed.flags.task) ?? undefined,
+              "Usage: barena explore --runtime xiaobaos --role <role> --task <objective>"
+            ),
+            scenario_id: stringFlag(parsed.flags["scenario-id"]) ?? undefined,
+            model:
+              stringFlag(parsed.flags.model) ??
+              project?.config.provider?.model ??
+              undefined,
+            skill: stringFlag(parsed.flags.skill) ?? undefined,
+            max_turns: numberFlag(parsed.flags["max-turns"], 4),
+            timeout_ms: numberFlag(parsed.flags.timeout, 180_000),
+            env_allowlist: createXiaobaRuntimeConfig(
+              parsed.flags,
+              project,
+              profile
+            ).env_allowlist,
+          });
+      const result = await runExploreScenario(scenario, {
+        runs_root: resolvedRoot(parsed.flags, project, "runs"),
+        xiaoba: createXiaobaRuntimeConfig(parsed.flags, project, profile),
+      });
+      printJson({
+        schema: result.schema,
+        run_id: result.run_id,
+        scenario_id: result.scenario_id,
+        status: result.status,
+        summary: result.summary,
+        runtime: result.scenario.target.runtime,
+        role: result.scenario.target.role,
+        target_turns: result.turns.filter((turn) => turn.target).length,
+        issues:
+          result.inspector.status === "completed"
+            ? result.inspector.output.issues.length
+            : 0,
+        otlp: {
+          envelopes: result.evidence.native_otlp_envelopes,
+          spans: result.evidence.native_otlp_spans,
+          complete: result.evidence.evidence_complete,
+        },
+        replay_case_candidates: result.replay_case_candidates.length,
+        report: result.paths.report_markdown,
+        result: result.paths.report_json,
+      });
+      if (result.status === "pass") return EXIT_SUCCESS;
+      if (result.status === "unsafe") return 2;
+      return EXIT_HELD;
     }
 
     if (effectiveCommand === "import" && subcommand === "skill") {
@@ -216,8 +347,20 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
       return result.ready === true ? EXIT_SUCCESS : EXIT_HELD;
     }
 
-    if (effectiveCommand === "e2e" && subcommand === "run") {
-      const casePath = required(positionals[0], "Usage: barena e2e run <case.json> [--runs-root runs]");
+    if (
+      (effectiveCommand === "e2e" && subcommand === "run") ||
+      effectiveCommand === "replay"
+    ) {
+      const casePath =
+        effectiveCommand === "replay"
+          ? required(
+              subcommand,
+              "Usage: barena replay <case.json> [--target-command ./driver] [--runs-root runs]"
+            )
+          : required(
+              positionals[0],
+              "Usage: barena e2e run <case.json> [--runs-root runs]"
+            );
       const loaded = loadAgentE2ECase(casePath);
       const project = optionalProjectConfig(parsed.flags);
       const caseTargetId = loaded.caseDefinition.target.adapter === "openclaw"
@@ -248,9 +391,21 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
       return exitCodeForDecision(scorecard.decision);
     }
 
-    if (effectiveCommand === "evaluate" && subcommand === "skill") {
+    if (
+      (effectiveCommand === "evaluate" && subcommand === "skill") ||
+      effectiveCommand === "compare"
+    ) {
       const project = optionalProjectConfig(parsed.flags);
-      const skillPath = required(positionals[0], "Usage: barena eval skill <skill-path> [--suite skillsbench:starter|--case <case.json>|--case-pack <pack.json>]");
+      const skillPath =
+        effectiveCommand === "compare"
+          ? required(
+              subcommand,
+              "Usage: barena compare <candidate-skill> [--suite skillsbench:starter|--case <case.json>] [--attempts 2]"
+            )
+          : required(
+              positionals[0],
+              "Usage: barena eval skill <skill-path> [--suite skillsbench:starter|--case <case.json>|--case-pack <pack.json>]"
+            );
       let casePath = stringFlag(parsed.flags.case) ?? undefined;
       let casePackPath = stringFlag(parsed.flags["case-pack"]) ?? undefined;
       const target = stringFlag(parsed.flags.target) ?? project?.config.default_target ?? "openclaw";
@@ -366,12 +521,15 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
           color,
         });
       } else {
+        const project = optionalProjectConfig(parsed.flags);
+        const profile = configuredProfile(project, "xiaobaos");
+        const xiaoba = createXiaobaRuntimeConfig(parsed.flags, project, profile);
         await startEvaluationTui({
-          runsRoot: stringFlag(parsed.flags["runs-root"]) ?? "runs",
+          runsRoot: resolvedRoot(parsed.flags, project, "runs"),
           color,
-          xiaobaCommand: aliasedFlag(parsed.flags, "xiaobaos-command", "xiaoba-command") ?? undefined,
-          xiaobaProjectRoot: aliasedFlag(parsed.flags, "xiaobaos-project-root", "xiaoba-project-root") ?? undefined,
-          xiaobaRolesRoot: stringFlag(parsed.flags["roles-root"]) ?? undefined,
+          homeMode: "product",
+          initialWorkflow: "home",
+          ...tuiXiaobaOptions(xiaoba, project?.config.provider?.model),
         });
       }
       return EXIT_SUCCESS;
@@ -610,6 +768,43 @@ function createXiaobaTargetAdapter(
   });
 }
 
+function createXiaobaRuntimeConfig(
+  flags: Record<string, FlagValue>,
+  project?: LoadedProjectConfig,
+  profile?: BarenaTargetProfile
+): XiaobaOSRuntimeAdapterConfig {
+  const config = xiaobaAdapterFlags(flags, project, profile);
+  return {
+    command: config.command,
+    project_root: config.projectRoot,
+    roles_root: config.rolesRoot,
+    env_allowlist: config.envAllowlist,
+  };
+}
+
+function tuiXiaobaOptions(
+  config: XiaobaOSRuntimeAdapterConfig,
+  model?: string
+): {
+  xiaobaCommand?: string;
+  xiaobaProjectRoot?: string;
+  xiaobaRolesRoot?: string;
+  xiaobaSkillsRoot?: string;
+  xiaobaEnvAllowlist?: string[];
+  exploreModel?: string;
+} {
+  return {
+    ...(config.command && { xiaobaCommand: config.command }),
+    ...(config.project_root && { xiaobaProjectRoot: config.project_root }),
+    ...(config.roles_root && { xiaobaRolesRoot: config.roles_root }),
+    ...(config.skills_root && { xiaobaSkillsRoot: config.skills_root }),
+    ...(config.env_allowlist?.length && {
+      xiaobaEnvAllowlist: config.env_allowlist,
+    }),
+    ...(model && { exploreModel: model }),
+  };
+}
+
 function optionalProjectConfig(flags: Record<string, FlagValue>): LoadedProjectConfig | undefined {
   return loadProjectConfig(process.cwd(), stringFlag(flags.config) ?? undefined);
 }
@@ -687,10 +882,14 @@ function printHelp(): void {
   console.log(`Barena - Agentic Eval and Release for Agent Harness Evolution
 
 Start here:
+  barena                              # full-screen product TUI: Explore / Replay / Compare
+  barena explore                      # same TUI, starting at Runtime selection
+  barena explore --runtime xiaobaos --role <role-id> [--skill <skill-id>] --task "<objective>"
+  barena replay <case.json> [--target-command ./driver]
+  barena compare <candidate-skill> (--case <case.json> | --suite skillsbench:starter) [--attempts 2]
   barena init --target openclaw [--provider openai --model <model> --api-key-env OPENAI_API_KEY]
   barena eval skill <path>            # uses .barena/config.json defaults
-  barena                              # guided Skill evaluation
-  barena guide [--subjects-root path] [--runs-root path]
+  barena guide                        # compatibility Skill-evaluation guide
 
 Evaluate a change:
   barena evaluate skill <path> --target xiaobaos --role <role-id> --suite skillsbench:starter [--attempts 2]
@@ -718,7 +917,7 @@ Advanced:
   barena list targets
   barena list suites
   barena config show
-  barena tui [--snapshot] [--color|--no-color]  # advanced evidence TUI
+  barena tui [--snapshot] [--color|--no-color]  # product TUI compatibility entry
   barena doctor [--target <id>]
 
 Exit codes:
@@ -727,4 +926,35 @@ Exit codes:
   2  rejected / unsafe
   3  usage / configuration / schema / I/O / internal error
 `);
+}
+
+function printCommandHelp(command: string): void {
+  if (command === "explore") {
+    console.log(`Usage:
+  barena explore
+  barena explore <scenario.json>
+  barena explore --runtime xiaobaos --role <role-id> [--skill <skill-id>] --task "<objective>"
+
+Runs the UserCat → target Agent → InspectorCat → ReviewerCat Explore DAG.
+Interactive use opens the shared product TUI; automation uses the same typed engine.`);
+    return;
+  }
+  if (command === "replay") {
+    console.log(`Usage:
+  barena replay <case.json> [--target-command ./driver] [--runs-root runs]
+
+Runs a fixed barena.agent_e2e_case.v1 through fresh workspace/session attempts,
+deterministic Artifact verification, and replay aggregation.`);
+    return;
+  }
+  if (command === "compare") {
+    console.log(`Usage:
+  barena compare <candidate-skill> --target <xiaobaos|openclaw|portable-id> \\
+    (--case <case.json> | --suite skillsbench:starter) [--attempts 2]
+
+Runs the same target and Case without versus with the candidate Skill, then emits
+the verifier-backed lift, stability, regression, and cleared/held/rejected gate.`);
+    return;
+  }
+  printHelp();
 }

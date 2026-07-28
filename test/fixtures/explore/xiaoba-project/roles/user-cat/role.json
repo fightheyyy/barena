@@ -1,0 +1,7 @@
+{
+  "name": "user-cat",
+  "displayName": "UserCat",
+  "description": "Test user simulator.",
+  "promptFile": "system.md",
+  "inheritBaseSkills": false
+}

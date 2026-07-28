@@ -111,7 +111,7 @@ Barena must never invoke `xiaoba arena` to evaluate XiaobaOS. Doing so makes the
 
 The target contract is deliberately narrow: start an isolated session/workspace, send a user message through the runtime's ordinary Agent surface, collect observable output/workspace changes and any genuine native trace, then close the session. Target-reported completion never bypasses Barena's verifier. Boundary-only evidence must remain visibly labeled and must not fabricate target-native tool calls or hidden reasoning.
 
-For XiaobaOS, Barena invokes the ordinary `chat --role ... --message ... [--skill ...]` surface. XiaobaOS owns Role, Skill, Tool, model, memory, and session execution; Barena owns UserCat/case driving, inspection, replay, verification, aggregation, and the release decision. A future adaptive UserCat campaign may use a configurable evaluator provider, but must remain outside the target runtime.
+For XiaobaOS, Barena invokes the ordinary `chat --role ... --message ... [--skill ...]` surface. XiaobaOS owns Role, Skill, Tool, model, memory, and session execution; Barena owns UserCat/case driving, inspection, replay, verification, aggregation, and the release decision. The first Explore implementation uses XiaoBaOS Roles for UserCat, InspectorCat, and ReviewerCat, but Barena owns their prompts, session isolation, evidence contract, parsing, and outcome semantics; XiaoBaOS Arena is never invoked.
 
 This amendment is evidence-driven and does not change the product category. The previous Arena-coupled implementation proved integration mechanics but invalidated Barena's independence boundary. XiaobaOS already exposes an ordinary CLI chat surface, OpenClaw exposes a local JSON Agent surface, and Hermes/custom agents can conform through a small JSON driver; all belong behind `AgentRuntimeAdapter`.
 
@@ -199,14 +199,14 @@ GitHub stars, report views, and benchmark run counts are secondary signals; they
 
 Near-term sequence:
 
-1. Remove the XiaobaOS Arena dependency and ship the ordinary-chat XiaobaOS Runtime adapter.
-2. Run the SkillsBench-derived XiaobaOS Skill comparison through Barena-owned attempts and verifiers.
-3. Migrate the one-shot `TargetAdapter` compatibility API to the canonical multi-turn `AgentRuntimeAdapter`.
-4. Add a bounded Explore campaign that repeatedly drives the same Runtime contract and emits reviewable Replay Case candidates.
-5. Export Barena evaluator/boundary spans through OTLP and ingest genuine Runtime-native OTel spans when supported.
-6. Keep XiaobaOS, Claude Code, Codex, OpenClaw, and portable/Hermes targets on the same evaluator-owned workflow.
-7. Put the same release decision into GitHub CI.
-8. Expand to Role, prompt, model, tool, memory, and runtime changes once truthful baseline/candidate target configurations exist.
+1. Keep the removed XiaobaOS Arena dependency out of every public path.
+2. Preserve the shipped SkillsBench-derived XiaobaOS Skill comparison through Barena-owned attempts and verifiers.
+3. Extend the shipped multi-turn `AgentRuntimeAdapter` from XiaoBaOS Explore to Replay and additional Runtimes.
+4. Calibrate the shipped bounded XiaoBaOS Explore campaign and reviewable Replay Case candidates on real Roles.
+5. Add Barena-owned evaluator/boundary OTel spans; continue ingesting genuine Runtime-native OTLP without fabricating unsupported parentage.
+6. Add Claude Code, Codex, OpenClaw, and portable/Hermes Explore behind the same Runtime registry and evaluator-owned workflow.
+7. Ship the new `barena replay` and `barena compare` surfaces and put their release decision into GitHub CI.
+8. Expand to Role, prompt, model, tool, memory, and runtime comparisons once truthful baseline/candidate target configurations exist.
 
 Feature filter:
 

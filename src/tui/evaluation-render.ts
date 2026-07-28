@@ -1,4 +1,5 @@
 import figlet from "figlet";
+import type { ExploreProgressEvent } from "../explore/types";
 import { AnyEvaluationResult, EvaluationTuiState, TraceViewEvent } from "./evaluation-model";
 
 export interface EvaluationRenderOptions {
@@ -13,6 +14,7 @@ const GOLD = "\x1b[38;5;220m";
 const DEFAULT_FOREGROUND = "";
 const DIM = "\x1b[2m";
 const BOLD = "\x1b[1m";
+const SELECTED_MARKER = "\x1b[1;30;48;5;220m";
 const RESET = "\x1b[0m";
 
 export function renderEvaluationTui(state: EvaluationTuiState, options: EvaluationRenderOptions = {}): string {
@@ -22,17 +24,20 @@ export function renderEvaluationTui(state: EvaluationTuiState, options: Evaluati
   if (width < 40) {
     return paint("BARENA\n\nTerminal too narrow.\nNeed 40+ columns.\n\nq quit", DEFAULT_FOREGROUND, color);
   }
-  const showHero = state.screen === "home" && width >= 72 && height >= 34;
+  const showHero =
+    state.screen === "home" &&
+    width >= 72 &&
+    height >= (state.homeMode === "product" ? 24 : 34);
   const masthead = showHero ? heroMasthead(width, color) : compactMasthead(color);
-  const bodyHeight = Math.max(3, height - masthead.length - 6);
-  const body = screenBody(state, width - 6, bodyHeight, color);
+  const bodyHeight = Math.max(3, height - masthead.length - 4);
+  const body = screenBody(state, width - 4, bodyHeight, color);
   return [
     ...masthead,
     workflowProgress(state, width, color),
     "",
-    frame(body, width, bodyHeight, color),
+    openCanvas(body, width, bodyHeight, color),
     "",
-    footer(state, color),
+    footer(state, color, width),
   ].join("\n");
 }
 
@@ -62,56 +67,286 @@ function compactMasthead(color: boolean): string[] {
 
 function screenBody(state: EvaluationTuiState, width: number, height: number, color: boolean): string[] {
   if (state.screen === "home") {
-    const descriptions = [
-      "Same-Role Skill comparison through XiaobaOS ordinary chat.",
-      "Built-in OpenClaw adapter with boundary/workspace verification.",
-      "Hermes or custom CLI through Barena's portable JSON contract.",
-      "Role A/B (temporarily held during ordinary-target migration).",
-      "Evaluation stages and the evidence-to-release path.",
-      "Open a persisted decision and its trace.",
-      "Files, runtimes, and safety policy required before execution.",
-      "Exit without changing files.",
-    ];
-    const items = [
-      "XiaobaOS Skill (recommended)",
-      "OpenClaw Skill",
-      "Hermes/custom Skill",
-      "XiaobaOS Role",
-      "How Barena works",
-      "Previous runs",
-      "Prerequisites",
-      "Quit",
-    ];
-    if (width < 50) {
-      const compactDescriptions = [
-        "ordinary chat + verifier",
-        "portable boundary evidence",
-        "portable JSON driver",
-        "Role A/B migration held",
-        "evaluation DAG",
-        "saved decisions + traces",
-        "setup checklist",
-        "no changes",
+    if (state.homeMode === "product") {
+      const items =
+        width < 58
+          ? [
+              "Explore unknown behavior",
+              "Replay a Case  (CLI ready)",
+              "Compare  (CLI ready)",
+            ]
+          : [
+              "Explore unknown behavior",
+              "Replay a known Case  (CLI ready)",
+              "Compare releases  (CLI ready)",
+            ];
+      const descriptions = [
+        "Let UserCat discover how a real user can push an Agent or Skill to its boundary.",
+        "CLI ready: barena replay <case.json>. Interactive setup is next.",
+        "CLI ready: barena compare <skill> --case <case.json>. Interactive setup is next.",
       ];
       return [
-        heading("Run an agent evaluation", color),
-        "Choose what changed.",
-        paint("Import/setup: `barena guide`", DIM, color),
+        heading("What are you evaluating today?", color),
+        paint("Choose the job first. Barena will guide the rest.", DIM, color),
         "",
         ...menu(items, state.selected, color),
         "",
-        `${paint("Selected", `${BOLD}${GOLD}`, color)}  ${compactDescriptions[state.selected]}`,
+        `${paint("Selected", `${BOLD}${GOLD}`, color)}  ${
+          descriptions[state.selected]
+        }`,
       ];
     }
+    return skillHomeBody(state, width, color);
+  }
+  if (state.screen === "skill_home") {
+    return skillHomeBody(state, width, color);
+  }
+  if (state.screen === "explore_runtime") {
+    const runtimes = state.runtimes;
     return [
-      heading("Run an agent evaluation", color),
-      "Choose what changed and where it should run.",
-      paint("Need import or a starter case? Use `barena guide`.", DIM, color),
+      heading("Choose a local Agent Runtime", color),
       "",
-      ...menu(items, state.selected, color),
+      runtimes.length
+        ? "Detected CLIs are listed separately from implemented adapters."
+        : "No supported Agent Runtime CLI was detected on PATH.",
       "",
-      `${paint("Selected", `${BOLD}${GOLD}`, color)}  ${descriptions[state.selected]}`,
+      ...(runtimes.length
+        ? menu(
+            runtimes.map(
+              (runtime) =>
+                `${runtime.display_name}  ${
+                  runtime.explore_support === "ready"
+                    ? "Explore ready"
+                    : "adapter pending"
+                }`
+            ),
+            state.selected,
+            color
+          )
+        : [paint("Install or explicitly configure XiaoBaOS, then retry.", GOLD, color)]),
+      "",
+      ...(runtimes[state.selected]
+        ? [
+            row(
+              "Command",
+              runtimes[state.selected].command_path ??
+                runtimes[state.selected].command_name
+            ),
+            row("Status", runtimes[state.selected].detail),
+          ]
+        : []),
     ];
+  }
+  if (state.screen === "explore_role") {
+    const roles = state.xiaobaRoles;
+    return [
+      heading("Choose the XiaoBaOS Agent profile", color),
+      "",
+      "Base Agent is the explicit default. Evaluator Roles are hidden.",
+      "",
+      ...menuWindow(
+        roles.map((role) =>
+          role.base_profile
+            ? `${role.display_name}  (default)`
+            : `${role.display_name}  (${role.id})`
+        ),
+        state.selected,
+        Math.max(3, height - 8),
+        color
+      ),
+      "",
+      ...(roles[state.selected]?.description
+        ? [
+            `${paint("Selected", `${BOLD}${GOLD}`, color)}  ${
+              roles[state.selected].description
+            }`,
+          ]
+        : []),
+    ];
+  }
+  if (state.screen === "explore_task") {
+    return [
+      heading("What should UserCat explore?", color),
+      row(
+        "Target",
+        `${state.exploreRuntime?.display_name ?? "Runtime"} / ${
+          state.exploreRole?.display_name ?? "Agent"
+        }`
+      ),
+      row(
+        "Focus",
+        state.exploreSkill
+          ? `${state.exploreSkill.display_name} Skill`
+          : "Entire Agent configuration"
+      ),
+      "",
+      "Describe the behavior, user situation, or boundary you care about.",
+      `${paint(" YOU ", SELECTED_MARKER, color)} ${state.exploreTask}${paint(
+        "▌",
+        BOLD,
+        color
+      )}`,
+      "",
+      paint(
+        state.exploreSkill
+          ? "Use /skill clear to test the entire Agent instead."
+          : "Optional: type /skill to focus on an installed Skill.",
+        DIM,
+        color
+      ),
+      paint(
+        'Example: "Use vague requests and check whether it asks the right follow-ups."',
+        DIM,
+        color
+      ),
+    ];
+  }
+  if (state.screen === "explore_skill") {
+    const skills = applicableSkills(state);
+    return [
+      heading("Choose a Skill focus", color),
+      row(
+        "Host",
+        `${state.exploreRuntime?.display_name ?? "Runtime"} / ${
+          state.exploreRole?.display_name ?? "Agent"
+        }`
+      ),
+      "",
+      `${paint(" FILTER ", SELECTED_MARKER, color)} ${
+        state.exploreSkillInput
+      }${paint("▌", BOLD, color)}`,
+      "",
+      ...(skills.length
+        ? menuWindow(
+            skills.map(
+              (skill) =>
+                `${skill.display_name}  (${
+                  skill.scope === "role" ? "Role" : "Base"
+                })`
+            ),
+            state.selected,
+            Math.max(3, height - 10),
+            color
+          )
+        : [
+            paint(
+              state.exploreSkillInput
+                ? "No matching installed Skill. Clear the filter and try again."
+                : "No installed Skill is available for this Agent profile.",
+              GOLD,
+              color
+            ),
+          ]),
+      "",
+      paint(
+        state.exploreTask
+          ? "Your test objective is preserved; selecting a Skill returns to it."
+          : "Select a Skill, then describe the behavior in the same Composer.",
+        DIM,
+        color
+      ),
+    ];
+  }
+  if (state.screen === "explore_review") {
+    const role = state.exploreRole;
+    return [
+      heading("Ready to explore", color),
+      "",
+      row(
+        "Target",
+        `${state.exploreRuntime?.display_name ?? "XiaoBaOS"} / ${
+          role ? `${role.display_name} (${role.id})` : "missing Role"
+        }`
+      ),
+      row(
+        "Focus",
+        state.exploreSkill
+          ? `${state.exploreSkill.display_name} Skill`
+          : "Entire Agent configuration"
+      ),
+      ...(state.exploreModel ? [row("Model", state.exploreModel)] : []),
+      row("Objective", state.exploreTask),
+      row(
+        "Method",
+        "UserCat explores → InspectorCat inspects → ReviewerCat judges"
+      ),
+      row(
+        "Budget",
+        `Auto; stops when evidence is sufficient (safety cap ${state.exploreMaxTurns})`
+      ),
+      row("Model calls", `maximum ${state.exploreMaxTurns * 2 + 2}`),
+      row("Evidence", "conversation + workspace + required native OTel"),
+      row("Writes", "a new persisted run under runs/"),
+      "",
+      paint(
+        "This may call paid models. Press Enter to run; e edits the objective.",
+        GOLD,
+        color
+      ),
+    ];
+  }
+  if (state.screen === "explore_confirm") {
+    return [
+      heading("Start model-backed Explore?", color),
+      "",
+      row("Target", `${state.exploreRuntime?.display_name ?? "XiaoBaOS"} / ${state.exploreRole?.id ?? "Role"}`),
+      row("Maximum calls", String(state.exploreMaxTurns * 2 + 2)),
+      row("Evidence", "native OTLP required; missing evidence blocks the run"),
+      row("Isolation", "fresh workspaces + Role/Skill snapshots; policy_only"),
+      row("Writes", "a new persisted run under runs/"),
+      "",
+      paint("This may incur provider cost. Press y to start; Enter does nothing.", GOLD, color),
+    ];
+  }
+  if (state.screen === "explore_running") {
+    return exploreRunDashboard(state, width, color);
+  }
+  if (state.screen === "explore_result" && state.exploreResult) {
+    const result = state.exploreResult;
+    const issues =
+      result.inspector.status === "completed"
+        ? result.inspector.output.issues
+        : [];
+    const behavior = issues.filter((issue) => issue.severity !== "info");
+    const diagnostics = issues.filter((issue) => issue.severity === "info");
+    return [
+      heading("Evaluation complete", color),
+      `${row("Target outcome", exploreOutcome(result.status, color))}`,
+      result.summary,
+      "",
+      row(
+        "Evidence",
+        result.evidence.evidence_complete
+          ? "complete; evaluation ran successfully"
+          : "incomplete"
+      ),
+      row("Behavior", `${behavior.length} finding(s)`),
+      ...behavior.slice(0, 2).map(
+        (issue, index) => `${index + 1}. ${issue.summary}`
+      ),
+      row("Diagnostics", `${diagnostics.length} informational observation(s)`),
+      row(
+        "Conversation",
+        `${result.turns.filter((turn) => Boolean(turn.target)).length} interaction(s)`
+      ),
+      row(
+        "Tested focus",
+        result.scenario.target.skill
+          ? `${result.scenario.target.skill} Skill`
+          : `${
+              result.runtime?.target_role ?? result.scenario.target.role
+            } complete Agent configuration`
+      ),
+      "",
+      paint(
+        "The target outcome is separate from whether Barena completed the evaluation.",
+        DIM,
+        color
+      ),
+    ];
+  }
+  if (state.screen === "explore_transcript" && state.exploreResult) {
+    return exploreTranscriptBody(state, width, height, color);
   }
   if (state.screen === "dag") return dagBody(width, height, color);
   if (state.screen === "baseline_role") {
@@ -220,7 +455,9 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
     return [heading("Previous evaluations", color), "", ...state.previous.map((item, index) => {
       const result = item.result;
       const candidate = resultCandidateName(result);
-      return `${index === state.selected ? paint("›", GOLD, color) : " "} ${candidate}  ${result.decision.toUpperCase()}  ${result.reason_code}`;
+      const selected = index === state.selected;
+      const content = `${candidate}  ${result.decision.toUpperCase()}  ${result.reason_code}`;
+      return `${selectionMarker(selected, color)} ${selected ? paint(content, BOLD, color) : content}`;
     })];
   }
   if (state.screen === "prerequisites") {
@@ -246,6 +483,69 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
     ];
   }
   return [heading("Barena", color)];
+}
+
+function skillHomeBody(
+  state: EvaluationTuiState,
+  width: number,
+  color: boolean
+): string[] {
+  const descriptions = [
+    "Same-Role Skill comparison through XiaobaOS ordinary chat.",
+    "Built-in OpenClaw adapter with boundary/workspace verification.",
+    "Hermes or custom CLI through Barena's portable JSON contract.",
+    "Role A/B (temporarily held during ordinary-target migration).",
+    "Evaluation stages and the evidence-to-release path.",
+    "Open a persisted decision and its trace.",
+    "Files, runtimes, and safety policy required before execution.",
+    "Exit without changing files.",
+  ];
+  const items = [
+    "XiaobaOS Skill (recommended)",
+    "OpenClaw Skill",
+    "Hermes/custom Skill",
+    "XiaobaOS Role",
+    "How Barena works",
+    "Previous runs",
+    "Prerequisites",
+    "Quit",
+  ];
+  if (width < 50) {
+    const compactDescriptions = [
+      "ordinary chat + verifier",
+      "portable boundary evidence",
+      "portable JSON driver",
+      "Role A/B migration held",
+      "evaluation DAG",
+      "saved decisions + traces",
+      "setup checklist",
+      "no changes",
+    ];
+    return [
+      heading("Run an agent evaluation", color),
+      "Choose the target Runtime.",
+      paint("Import/setup: `barena guide`", DIM, color),
+      "",
+      ...menu(items, state.selected, color),
+      "",
+      `${paint("Selected", `${BOLD}${GOLD}`, color)}  ${compactDescriptions[state.selected]}`,
+    ];
+  }
+  return [
+    heading("Run an agent evaluation", color),
+    "Choose where the candidate Skill should run.",
+    paint(
+      state.homeMode === "product"
+        ? "Esc returns to the Barena product home."
+        : "Need import or a starter case? Use `barena guide`.",
+      DIM,
+      color
+    ),
+    "",
+    ...menu(items, state.selected, color),
+    "",
+    `${paint("Selected", `${BOLD}${GOLD}`, color)}  ${descriptions[state.selected]}`,
+  ];
 }
 
 function resultBody(state: EvaluationTuiState, color: boolean): string[] {
@@ -357,11 +657,49 @@ function dagBody(width: number, height: number, color: boolean): string[] {
 }
 
 function workflowProgress(state: EvaluationTuiState, width: number, color: boolean): string {
-  if (["home", "dag", "previous", "prerequisites"].includes(state.screen)) {
-    return paint(width < 58 ? "Choose workflow · guide imports" : "Choose workflow · local paths · `barena guide` imports/creates", DIM, color);
+  if (["home", "skill_home", "dag", "previous", "prerequisites"].includes(state.screen)) {
+    return paint(
+      state.screen === "home" && state.homeMode === "product"
+        ? width < 58
+          ? "[1/5] Task · choose the job"
+          : "[1 Task]  →  2 Runtime  →  3 Agent  →  4 Objective  →  5 Confirm"
+        : width < 58
+          ? "Choose workflow · evidence first"
+          : "Choose workflow · Explore unknowns · Replay known cases · Compare releases",
+      DIM,
+      color
+    );
   }
   if (state.screen === "error") {
     return paint("Fix input · your values are preserved", DIM, color);
+  }
+  if (state.screen.startsWith("explore_")) {
+    if (state.screen === "explore_running") {
+      return paint(
+        `Explore · ${state.exploreRole?.id ?? "target"} · Auto evidence budget`,
+        DIM,
+        color
+      );
+    }
+    if (
+      state.screen === "explore_result" ||
+      state.screen === "explore_transcript"
+    ) {
+      return paint("Evaluation complete · inspect outcome and evidence", DIM, color);
+    }
+    if (state.screen === "explore_review") {
+      return exploreSetupProgress(5, width, color);
+    }
+    if (state.screen === "explore_role") {
+      return exploreSetupProgress(3, width, color);
+    }
+    if (state.screen === "explore_runtime") {
+      return exploreSetupProgress(2, width, color);
+    }
+    if (state.screen === "explore_task" || state.screen === "explore_skill") {
+      return exploreSetupProgress(4, width, color);
+    }
+    return paint("Explore setup", DIM, color);
   }
   const native = state.result
     ? state.result.schema === "barena.xiaoba_capability_evaluation_result.v1"
@@ -383,6 +721,28 @@ function workflowProgress(state: EvaluationTuiState, width: number, color: boole
     const value = step === active ? `[${step} ${label}]` : `${step} ${label}`;
     return step === active ? paint(value, `${BOLD}${GOLD}`, color) : paint(value, DIM, color);
   }).join("  →  ");
+}
+
+function exploreSetupProgress(
+  active: number,
+  width: number,
+  color: boolean
+): string {
+  const labels = ["Task", "Runtime", "Agent", "Objective", "Confirm"];
+  if (width < 58) {
+    return `${paint(`[${active}/5]`, `${BOLD}${GOLD}`, color)} ${
+      labels[active - 1]
+    }`;
+  }
+  return labels
+    .map((label, index) => {
+      const step = index + 1;
+      const value = step === active ? `[${step} ${label}]` : `${step} ${label}`;
+      return step === active
+        ? paint(value, `${BOLD}${GOLD}`, color)
+        : paint(value, DIM, color);
+    })
+    .join("  →  ");
 }
 
 function workflowStep(state: EvaluationTuiState): number {
@@ -433,29 +793,574 @@ function inputScreen(title: string, hint: string, example: string, value: string
   ];
 }
 
-function frame(lines: string[], width: number, maxRows: number, color: boolean): string {
+function applicableSkills(state: EvaluationTuiState) {
+  const query = state.exploreSkillInput.trim().toLowerCase();
+  const byId = new Map<string, EvaluationTuiState["xiaobaSkills"][number]>();
+  for (const skill of state.xiaobaSkills) {
+    if (
+      skill.scope !== "base" &&
+      (skill.scope !== "role" || skill.role_id !== state.exploreRole?.id)
+    ) {
+      continue;
+    }
+    const key = skill.id.toLowerCase();
+    const current = byId.get(key);
+    if (!current || skill.scope === "role") byId.set(key, skill);
+  }
+  const skills = [...byId.values()].sort(
+    (left, right) =>
+      left.display_name.localeCompare(right.display_name) ||
+      left.id.localeCompare(right.id)
+  );
+  if (!query) return skills;
+  return skills.filter((skill) =>
+    [skill.id, skill.display_name, skill.description ?? ""].some((value) =>
+      value.toLowerCase().includes(query)
+    )
+  );
+}
+
+function openCanvas(
+  lines: string[],
+  width: number,
+  maxRows: number,
+  color: boolean
+): string {
   const inner = width - 4;
-  const top = `╭${"─".repeat(width - 2)}╮`;
-  const bottom = `╰${"─".repeat(width - 2)}╯`;
   const wrapped = lines.flatMap((line) => wrapText(line, inner));
   const visible = wrapped.slice(0, maxRows);
   if (wrapped.length > maxRows && visible.length > 0) {
     visible[visible.length - 1] = paint("… resize taller to see more", DIM, color);
   }
-  const rows = visible.map((line) => `│ ${pad(line, inner)} │`);
-  return paint([top, ...rows, bottom].join("\n"), DEFAULT_FOREGROUND, color);
+  return visible.map((line) => `  ${line}`).join("\n");
+}
+
+function exploreRunDashboard(
+  state: EvaluationTuiState,
+  width: number,
+  color: boolean
+): string[] {
+  if (state.exploreDetails) {
+    return exploreDetailedActivity(state, width, color);
+  }
+  const events = state.exploreProgress;
+  const phase = explorePhase(events);
+  const interactions = events.filter(
+    (event) =>
+      event.actor === "target" &&
+      event.stage === "target" &&
+      event.status === "completed"
+  ).length;
+  const signal = [...events]
+    .reverse()
+    .find(
+      (event) =>
+        event.status === "completed" &&
+        (event.message ||
+          (event.summary &&
+            ["inspector", "reviewer"].includes(event.actor)))
+    );
+  const evidence = [...events]
+    .reverse()
+    .find((event) => event.evidence)?.evidence;
+  const actors: Array<{
+    actor: ExploreProgressEvent["actor"];
+    label: string;
+    waiting: string;
+  }> = [
+    {
+      actor: "user_simulator",
+      label: "UserCat",
+      waiting: "preparing the first realistic user situation",
+    },
+    {
+      actor: "target",
+      label: state.exploreRole?.display_name ?? "Target Agent",
+      waiting: "waiting for UserCat",
+    },
+    {
+      actor: "inspector",
+      label: "InspectorCat",
+      waiting: "waiting for conversation and execution evidence",
+    },
+    {
+      actor: "reviewer",
+      label: "ReviewerCat",
+      waiting: "waiting for InspectorCat findings",
+    },
+  ];
+  return [
+    `${heading("Evaluation running", color)}  ${
+      state.exploreRole?.display_name ?? state.exploreRole?.id ?? "Target Agent"
+    }`,
+    ...(state.exploreSkill
+      ? [paint(`Focus: ${state.exploreSkill.display_name} Skill`, DIM, color)]
+      : [paint("Focus: complete Agent configuration", DIM, color)]),
+    explorePhaseLine(phase, color),
+    "",
+    ...actors.map(({ actor, label, waiting }) =>
+      actorActivityLine(events, actor, label, waiting, color)
+    ),
+    "",
+    row(
+      "Interactions",
+      `${interactions} observed; Auto stops when evidence is sufficient`
+    ),
+    row(
+      "Evidence",
+      evidence
+        ? [
+            evidence.otlp_spans !== undefined
+              ? `${evidence.otlp_spans} OTel spans`
+              : undefined,
+            evidence.workspace_changes !== undefined
+              ? `${evidence.workspace_changes} workspace changes`
+              : undefined,
+          ]
+            .filter(Boolean)
+            .join(" · ")
+        : "collecting conversation, Runtime, and workspace evidence"
+    ),
+    "",
+    paint("Latest signal", `${BOLD}${GOLD}`, color),
+    signal
+      ? progressPreview(
+          signal.message ?? signal.summary ?? "Evidence recorded.",
+          Math.max(48, width * 2)
+        )
+      : "Waiting for the first observable interaction.",
+    "",
+    paint(
+      "Press d for observable messages, findings, and evidence events.",
+      DIM,
+      color
+    ),
+  ];
+}
+
+function actorActivityLine(
+  events: ExploreProgressEvent[],
+  actor: ExploreProgressEvent["actor"],
+  label: string,
+  waiting: string,
+  color: boolean
+): string {
+  const event = [...events].reverse().find((candidate) => candidate.actor === actor);
+  if (!event) {
+    return `${paint("○", DIM, color)} ${label.padEnd(18)} ${paint(
+      waiting,
+      DIM,
+      color
+    )}`;
+  }
+  const glyph =
+    event.status === "started"
+      ? "●"
+      : event.status === "completed"
+        ? "✓"
+        : event.status === "blocked"
+          ? "!"
+          : "–";
+  const activity =
+    actor === "user_simulator"
+      ? event.status === "started"
+        ? `designing interaction ${event.turn ?? 1}`
+        : event.message
+          ? `sent interaction ${event.turn ?? 1}`
+          : "test campaign complete"
+      : actor === "target"
+        ? event.status === "started"
+          ? `responding to interaction ${event.turn ?? 1}`
+          : `response ${event.turn ?? 1} recorded`
+        : actor === "inspector"
+          ? event.status === "started"
+            ? "inspecting behavior, trace, and artifacts"
+            : `${event.issue_count ?? 0} finding(s) recorded`
+          : event.status === "started"
+            ? "judging the outcome from collected evidence"
+            : event.verdict
+              ? `verdict ${event.verdict}`
+              : "review complete";
+  return `${paint(
+    glyph,
+    event.status === "blocked" ? GOLD : DEFAULT_FOREGROUND,
+    color
+  )} ${label.padEnd(18)} ${activity}`;
+}
+
+function exploreDetailedActivity(
+  state: EvaluationTuiState,
+  width: number,
+  color: boolean
+): string[] {
+  const events = state.exploreProgress;
+  const latestTurn = events.reduce(
+    (maximum, event) => Math.max(maximum, event.turn ?? 0),
+    0
+  );
+  const actors: Array<{
+    actor: ExploreProgressEvent["actor"];
+    label: string;
+  }> = [
+    { actor: "user_simulator", label: "UserCat" },
+    { actor: "target", label: state.exploreRole?.id ?? "Target Agent" },
+    { actor: "inspector", label: "InspectorCat" },
+    { actor: "reviewer", label: "ReviewerCat" },
+  ];
+  const detailEvents = events
+    .filter(
+      (event) =>
+        event.stage !== "probe" &&
+        (event.message ||
+          event.reason ||
+          event.stage === "inspector" ||
+          event.stage === "reviewer" ||
+          event.stage === "evidence" ||
+          event.stage === "complete" ||
+          event.status === "blocked")
+    )
+    .slice(-3);
+  return [
+    `${heading("Execution details", color)}${
+      latestTurn
+        ? `  ${paint(`turn ${latestTurn}/${state.exploreMaxTurns}`, DIM, color)}`
+        : ""
+    }`,
+    paint(
+      "Observed actor events—not hidden model reasoning. Press d to return.",
+      DIM,
+      color
+    ),
+    "",
+    ...actors.map(({ actor, label }) => {
+      const latest = [...events].reverse().find((event) => event.actor === actor);
+      const status = latest?.status ?? "waiting";
+      const glyph =
+        status === "started"
+          ? "●"
+          : status === "completed"
+            ? "✓"
+            : status === "blocked"
+              ? "!"
+              : status === "skipped"
+                ? "–"
+                : "○";
+      const statusLabel =
+        status === "started"
+          ? "working"
+          : status === "completed"
+            ? "done"
+            : status;
+      return `${paint(glyph, status === "blocked" ? GOLD : DEFAULT_FOREGROUND, color)} ${label.padEnd(
+        18
+      )} ${statusLabel}`;
+    }),
+    "",
+    paint("Activity", `${BOLD}${GOLD}`, color),
+    ...(detailEvents.length
+      ? detailEvents.flatMap((event) =>
+          renderExploreProgressEvent(event, width, color)
+        )
+      : [
+          paint(
+            "Waiting for Runtime preflight and the first UserCat turn…",
+            DIM,
+            color
+          ),
+        ]),
+  ];
+}
+
+type ExploreHumanPhase = "explore" | "inspect" | "judge";
+
+function explorePhase(events: ExploreProgressEvent[]): ExploreHumanPhase {
+  if (
+    events.some(
+      (event) =>
+        event.stage === "reviewer" ||
+        event.stage === "evidence" ||
+        event.stage === "complete"
+    )
+  ) {
+    return "judge";
+  }
+  if (events.some((event) => event.stage === "inspector")) {
+    return "inspect";
+  }
+  return "explore";
+}
+
+function explorePhaseLine(
+  active: ExploreHumanPhase,
+  color: boolean
+): string {
+  const phases: Array<{ id: ExploreHumanPhase; label: string }> = [
+    { id: "explore", label: "1 Explore" },
+    { id: "inspect", label: "2 Inspect" },
+    { id: "judge", label: "3 Judge" },
+  ];
+  const activeIndex = phases.findIndex((phase) => phase.id === active);
+  return phases
+    .map((phase, index) => {
+      if (index < activeIndex) return paint(`✓ ${phase.label}`, DIM, color);
+      if (index === activeIndex) {
+        return paint(`[${phase.label}]`, `${BOLD}${GOLD}`, color);
+      }
+      return paint(phase.label, DIM, color);
+    })
+    .join("  ──  ");
+}
+
+function exploreCurrentActivity(
+  event: ExploreProgressEvent | undefined
+): string {
+  if (!event || event.stage === "probe") return "Checking the local Runtime";
+  if (event.actor === "user_simulator") {
+    return event.status === "started"
+      ? "Simulated user is choosing the next realistic turn"
+      : "A new user interaction is ready";
+  }
+  if (event.actor === "target") {
+    return event.status === "started"
+      ? "Target Agent is responding"
+      : "Target response recorded";
+  }
+  if (event.actor === "inspector") {
+    return event.status === "started"
+      ? "Analyzing behavior and execution evidence"
+      : "Evidence analysis complete";
+  }
+  if (event.actor === "reviewer") {
+    return event.status === "started"
+      ? "Reviewing the target outcome"
+      : "Outcome review complete";
+  }
+  return event.stage === "evidence"
+    ? "Checking evidence completeness"
+    : "Finalizing the evaluation";
+}
+
+function exploreActivityExplanation(
+  event: ExploreProgressEvent | undefined
+): string {
+  if (!event) return "Barena is preparing an evidence-backed Explore run.";
+  if (event.turn && event.actor === "target") {
+    return `Interaction ${event.turn}; the conversation is visible after completion.`;
+  }
+  if (event.turn && event.actor === "user_simulator") {
+    return `Interaction ${event.turn}; Barena stops automatically when another turn adds no value.`;
+  }
+  return event.summary ?? "Barena is preserving observable evidence.";
+}
+
+function renderExploreProgressEvent(
+  event: ExploreProgressEvent,
+  width: number,
+  color: boolean
+): string[] {
+  const label =
+    event.actor === "user_simulator"
+      ? "UserCat"
+      : event.actor === "target"
+        ? "Target"
+        : event.actor === "inspector"
+          ? "InspectorCat"
+          : event.actor === "reviewer"
+            ? "ReviewerCat"
+            : "Barena";
+  const meta = [
+    `#${event.sequence}`,
+    label,
+    event.turn ? `turn ${event.turn}` : undefined,
+    event.status,
+    event.verdict ? `verdict ${event.verdict}` : undefined,
+    event.issue_count !== undefined ? `${event.issue_count} issue(s)` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const limit = Math.max(36, Math.floor(width * 1.25));
+  const lines = [paint(meta, GOLD, color)];
+  if (event.message) {
+    lines.push(
+      `  ${event.actor === "user_simulator" ? "User" : "Response"}: “${progressPreview(
+        event.message,
+        limit
+      )}”`
+    );
+  }
+  if (event.reason) {
+    lines.push(`  Reason: ${progressPreview(event.reason, limit)}`);
+  }
+  if (
+    event.summary &&
+    (!event.message ||
+      event.actor === "inspector" ||
+      event.actor === "reviewer" ||
+      event.actor === "barena")
+  ) {
+    lines.push(`  ${progressPreview(event.summary, limit)}`);
+  }
+  if (event.evidence) {
+    const evidence = [
+      event.evidence.otlp_spans !== undefined
+        ? `${event.evidence.otlp_spans} OTLP spans`
+        : undefined,
+      event.evidence.workspace_changes !== undefined
+        ? `${event.evidence.workspace_changes} workspace changes`
+        : undefined,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    if (evidence) lines.push(`  Evidence: ${evidence}`);
+  }
+  return lines;
+}
+
+function progressPreview(value: string, limit: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length <= limit
+    ? normalized
+    : `${normalized.slice(0, Math.max(1, limit - 1))}…`;
+}
+
+function exploreTranscriptBody(
+  state: EvaluationTuiState,
+  width: number,
+  height: number,
+  color: boolean
+): string[] {
+  const result = state.exploreResult!;
+  const messages = result.transcript;
+  const start = Math.min(
+    state.exploreTranscriptOffset,
+    Math.max(0, messages.length - 1)
+  );
+  const availableRows = Math.max(5, height - 4);
+  const lines: string[] = [];
+  let visible = 0;
+  for (const message of messages.slice(start)) {
+    const label =
+      message.actor === "user_simulator"
+        ? `Simulated user · interaction ${message.turn}`
+        : `${result.scenario.target.role} · interaction ${message.turn}`;
+    const block = [
+      paint(label, `${BOLD}${GOLD}`, color),
+      ...wrapText(
+        progressPreview(message.content, Math.max(120, width * 3)),
+        Math.max(20, width - 4)
+      ).map((line) => `  ${line}`),
+      "",
+    ];
+    if (lines.length && lines.length + block.length > availableRows) break;
+    lines.push(...block);
+    visible += 1;
+  }
+  return [
+    heading(
+      `Conversation  ${start + 1}-${start + visible}/${messages.length}`,
+      color
+    ),
+    paint(result.scenario.objective, DIM, color),
+    "",
+    ...lines,
+  ];
 }
 
 function menu(items: string[], selected: number, color: boolean): string[] {
-  return items.map((item, index) => `${index === selected ? paint("›", GOLD, color) : " "} ${index + 1}. ${item}`);
+  return items.map((item, index) =>
+    menuLine(item, index, index === selected, color)
+  );
+}
+
+function menuWindow(
+  items: string[],
+  selected: number,
+  size: number,
+  color: boolean
+): string[] {
+  if (items.length <= size) return menu(items, selected, color);
+  const start = Math.max(
+    0,
+    Math.min(selected - Math.floor(size / 2), items.length - size)
+  );
+  const visible = items.slice(start, start + size);
+  return visible.map((item, offset) => {
+    const index = start + offset;
+    const scroll =
+      offset === 0 && start > 0
+        ? "up"
+        : offset === visible.length - 1 && start + size < items.length
+          ? "down"
+          : undefined;
+    return menuLine(item, index, index === selected, color, scroll);
+  });
+}
+
+function menuLine(
+  item: string,
+  index: number,
+  selected: boolean,
+  color: boolean,
+  scroll?: "up" | "down"
+): string {
+  const marker = selected
+    ? selectionMarker(true, color)
+    : scroll
+      ? ` ${paint(scroll === "up" ? "↑" : "↓", GOLD, color)} `
+      : selectionMarker(false, color);
+  const content = `${index + 1}. ${item}`;
+  return `${marker} ${selected ? paint(content, BOLD, color) : content}`;
+}
+
+function selectionMarker(selected: boolean, color: boolean): string {
+  if (!selected) return "   ";
+  return color ? paint(" ▸ ", SELECTED_MARKER, true) : " > ";
 }
 
 function heading(value: string, color: boolean): string { return paint(value, BOLD, color); }
 function row(label: string, value: string): string { return `${label.padEnd(13)} ${value}`; }
 function decision(value: string, color: boolean): string { return paint(value.toUpperCase(), value === "cleared" ? "\x1b[38;5;82m" : value === "rejected" ? "\x1b[38;5;196m" : GOLD, color); }
-function footer(state: EvaluationTuiState, color: boolean): string {
+function exploreOutcome(value: string, color: boolean): string {
+  if (value === "pass") {
+    return paint("PASSED", "\x1b[38;5;82m", color);
+  }
+  if (value === "fail") {
+    return paint("NEEDS IMPROVEMENT", `${BOLD}${GOLD}`, color);
+  }
+  if (value === "unsafe") {
+    return paint("UNSAFE", "\x1b[38;5;196m", color);
+  }
+  return paint("COULD NOT VERIFY", GOLD, color);
+}
+function footer(
+  state: EvaluationTuiState,
+  color: boolean,
+  width: number
+): string {
   const value = state.screen === "home"
-    ? "↑/↓ choose · Enter select · q quit"
+    ? state.homeMode === "product"
+      ? width < 64
+        ? "↑/↓ choose · Enter · q"
+        : "↑/↓ choose · Enter select · d DAG · p runs · ? setup · q quit"
+      : "↑/↓ choose · Enter select · q quit"
+    : state.screen === "skill_home"
+      ? "↑/↓ choose · Enter select · Esc product home · q quit"
+      : state.screen === "explore_runtime" || state.screen === "explore_role"
+        ? "↑/↓ choose · Enter select · Esc back · q quit"
+        : state.screen === "explore_task"
+          ? "Type objective · /skill optional · Enter review · ^U clear · Esc back"
+          : state.screen === "explore_skill"
+            ? "Type to filter · ↑/↓ choose · Enter bind · Esc composer"
+          : state.screen === "explore_review"
+            ? "Enter run · e/Esc edit · model calls may incur cost"
+            : state.screen === "explore_confirm"
+              ? "y start · n/Esc cancel"
+              : state.screen === "explore_running"
+                ? "d execution details · keep this terminal open"
+              : state.screen === "explore_result"
+                ? "v conversation · e edit intent · h home · q quit"
+              : state.screen === "explore_transcript"
+                ? "↑/↓ conversation · b result · q quit"
     : ["baseline_role", "candidate", "target_command", "case"].includes(state.screen)
       ? "Enter next · ^U clear · Esc back"
       : state.screen === "review"
@@ -473,18 +1378,70 @@ function footer(state: EvaluationTuiState, color: boolean): string {
 }
 function paint(value: string, code: string, color: boolean): string { return color && code ? `${code}${value}${RESET}` : value; }
 function stripAnsi(value: string): string { return value.replace(/\x1b\[[0-9;]*m/g, ""); }
-function pad(value: string, width: number): string { return value + " ".repeat(Math.max(0, width - stripAnsi(value).length)); }
+function pad(value: string, width: number): string { return value + " ".repeat(Math.max(0, width - displayWidth(value))); }
 function center(value: string, width: number): string {
-  const length = stripAnsi(value).length;
+  const length = displayWidth(value);
   return length >= width ? stripAnsi(value).slice(0, width) : `${" ".repeat(Math.floor((width - length) / 2))}${value}`;
 }
 
 function wrapText(value: string, width: number): string[] {
-  if (stripAnsi(value).length <= width) return [value];
+  if (displayWidth(value) <= width) return [value];
   const plain = stripAnsi(value);
   const lines: string[] = [];
-  for (let index = 0; index < plain.length; index += width) lines.push(plain.slice(index, index + width));
+  let remaining = Array.from(plain);
+  while (remaining.length) {
+    let cells = 0;
+    let end = 0;
+    let lastSpace = -1;
+    while (end < remaining.length) {
+      const next = characterWidth(remaining[end]);
+      if (cells + next > width) break;
+      cells += next;
+      if (/\s/u.test(remaining[end])) lastSpace = end;
+      end += 1;
+    }
+    if (end === remaining.length) {
+      lines.push(remaining.join("").trimEnd());
+      break;
+    }
+    const split =
+      lastSpace >= Math.floor(end / 2)
+        ? lastSpace
+        : Math.max(1, end);
+    lines.push(remaining.slice(0, split).join("").trimEnd());
+    remaining = remaining.slice(
+      lastSpace >= Math.floor(end / 2) ? split + 1 : split
+    );
+    while (remaining[0] && /\s/u.test(remaining[0])) remaining.shift();
+  }
   return lines;
+}
+
+function displayWidth(value: string): number {
+  return Array.from(stripAnsi(value)).reduce(
+    (sum, character) => sum + characterWidth(character),
+    0
+  );
+}
+
+function characterWidth(character: string): number {
+  if (/[\p{Mark}\u0000-\u001f\u007f]/u.test(character)) return 0;
+  const point = character.codePointAt(0) ?? 0;
+  return point >= 0x1100 &&
+    (point <= 0x115f ||
+      point === 0x2329 ||
+      point === 0x232a ||
+      (point >= 0x2e80 && point <= 0xa4cf && point !== 0x303f) ||
+      (point >= 0xac00 && point <= 0xd7a3) ||
+      (point >= 0xf900 && point <= 0xfaff) ||
+      (point >= 0xfe10 && point <= 0xfe19) ||
+      (point >= 0xfe30 && point <= 0xfe6f) ||
+      (point >= 0xff00 && point <= 0xff60) ||
+      (point >= 0xffe0 && point <= 0xffe6) ||
+      (point >= 0x1f300 && point <= 0x1faff) ||
+      (point >= 0x20000 && point <= 0x3fffd))
+    ? 2
+    : 1;
 }
 
 function resultCandidateName(result: AnyEvaluationResult): string {
