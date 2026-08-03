@@ -265,6 +265,46 @@ test("Explore records a blocked report when the selected XiaoBaOS Role is missin
   assert.equal(path.dirname(path.dirname(result.paths.report_json)), result.paths.run_root);
 });
 
+test("Explore honors a Server-assigned run ID and cancels an active Runtime turn", { concurrency: false }, async (t) => {
+  const root = temporaryRoot(t);
+  const previousDelay = process.env.FAKE_XIAOBA_DELAY_MS;
+  process.env.FAKE_XIAOBA_DELAY_MS = "1000";
+  t.after(() => restoreEnv("FAKE_XIAOBA_DELAY_MS", previousDelay));
+  const abort = new AbortController();
+  const pending = runExploreScenario(
+    createAdHocExploreScenario({
+      role: "secretary-cat",
+      task: "取消一个正在执行的 Explore。",
+      max_turns: 3,
+      timeout_ms: 5_000,
+      env_allowlist: ["FAKE_XIAOBA_DELAY_MS"],
+    }),
+    {
+      runs_root: path.join(root, "runs"),
+      run_id: "server-explore-cancel-001",
+      signal: abort.signal,
+      xiaoba: {
+        command: FAKE_XIAOBA,
+        project_root: XIAOBA_PROJECT,
+        roles_root: ROLES_ROOT,
+        skills_root: SKILLS_ROOT,
+        env_allowlist: ["FAKE_XIAOBA_DELAY_MS"],
+        kill_grace_ms: 25,
+      },
+    }
+  );
+  setTimeout(() => abort.abort("requested by test"), 250);
+  const result = await pending;
+
+  assert.equal(result.run_id, "server-explore-cancel-001");
+  assert.equal(path.basename(result.paths.run_root), "server-explore-cancel-001");
+  assert.equal(result.status, "blocked");
+  assert.equal(result.reason_code, "run_cancelled");
+  assert.match(result.summary, /requested by test/);
+  assert.equal(result.evidence.evidence_complete, false);
+  assert.ok(fs.existsSync(result.paths.report_json));
+});
+
 test("non-interactive barena explore runs the same Scenario contract", { concurrency: false }, async (t) => {
   const root = temporaryRoot(t);
   const previousLog = console.log;

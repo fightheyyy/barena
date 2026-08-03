@@ -4,7 +4,7 @@
 
 > **Prove every Agent change works reliably before you ship it.**
 
-当模型、Prompt、Role、Skill、Tool、Memory 或 Runtime 发生变化时，Barena 用真实 Agent E2E 任务对 baseline 与 candidate 做隔离执行，保留 Trace、Artifact 与 Verifier 证据，并给出可审计的 `cleared / held / rejected` 发布结论。
+当模型、Prompt、Role、Skill、Tool、Memory 或 Runtime 发生变化时，Barena 用真实 Agent E2E 任务做隔离执行，保留 Trace、Artifact 与 Verifier 证据。回归型变更用固定 Case 证明已知能力没有被破坏；优化型变更再比较 baseline / candidate，最终形成可审计的 `cleared / held / rejected` 发布结论。
 
 > Barena 是评测控制面。XiaobaOS、OpenClaw、Hermes 或其他 CLI Agent 都只是被测目标。Barena **不会调用 XiaobaOS 内置 Arena 来替自己完成评测**。
 
@@ -36,7 +36,8 @@ flowchart LR
 
     Review["Inspector + Reviewer<br/>分析提升、回归与失败原因"]
 
-    Compare["barena compare<br/>baseline ↔ candidate"]
+    RunSet["兼容RunSet<br/>成功率 · 稳定性 · 证据完整性"]
+    Compare["barena compare<br/>可选的baseline ↔ candidate提升比较"]
 
     Decision["可审计的进化结论<br/>cleared / held / rejected"]
     NewCase["发现的新问题<br/>沉淀为下一轮Replay Case"]
@@ -52,12 +53,14 @@ flowchart LR
     E2E --> Evidence
 
     Evidence --> Review
-    Review --> Compare
+    Review --> RunSet
+    RunSet -->|"保护已知能力"| Decision
+    RunSet -->|"证明能力提升"| Compare
     Compare --> Decision
     Review --> NewCase
 ```
 
-当前版本已经落地两条执行路径：固定 Case Replay 用于保护已知能力；XiaoBaOS Explore 由真实 `user-cat` 驱动目标 Role 多轮交互，再由 `inspector-cat` 和 `reviewer-cat` 基于边界、Artifact 与原生 OTel 证据给出单次 `pass / fail / blocked / unsafe` 结论。只有 baseline/candidate Compare 才能生成 `cleared / held / rejected` 发布决策。
+当前版本已经落地两条执行路径：固定 Case Replay 用于保护已知能力；XiaoBaOS Explore 由真实 `user-cat` 驱动目标 Role 多轮交互，再由 `inspector-cat` 和 `reviewer-cat` 基于边界、Artifact 与原生 OTel 证据给出单次 `pass / fail / blocked / unsafe` 结论。Compare 是证明“候选方案是否优于基线”的可选操作，不再被误用为所有回归发布的必经步骤。
 
 ## 适用场景
 
@@ -76,7 +79,7 @@ flowchart LR
 | 无 Skill vs 候选 Skill 配对评测 | 可用 |
 | 多次独立 workspace/session | 可用 |
 | Artifact / structured JSON verifier | 可用 |
-| `cleared / held / rejected` 发布门禁 | 可用 |
+| `cleared / held / rejected` 发布门禁 | 配对 Skill improvement policy 可用；通用 non-regression policy 待接入 Platform |
 | XiaobaOS 普通 `chat` 适配器 | 可用；不调用 Arena |
 | OpenClaw 本地 subprocess 适配器 | 可用 |
 | Hermes / custom CLI JSON Driver | 契约与测试夹具可用；需要目标侧 Driver |
@@ -86,6 +89,10 @@ flowchart LR
 | XiaoBaOS Role 枚举与 Explore | 可用；真实 UserCat → 目标 Role → InspectorCat → ReviewerCat |
 | OpenTelemetry / OTLP 统一 Trace | Explore 可用；内置 OTLP/HTTP 接收并解码为统一 span NDJSON |
 | 三个产品 CLI 入口 | `explore`、`replay`、`compare` 均可执行；Replay/Compare 的交互式 TUI 配置待后续补齐 |
+| Engine Protocol / Node Worker | v1 已实现；支持服务端分配 Run ID、持久事件、取消与 hash-verified Run Package |
+| Barena Platform | 已选定并 fork Apache-2.0 LangWatch 底座；项目/API Key、OTLP 接入、Trace 搜索与 Waterfall 已完成真实 POC |
+| Go Run Control + Evidence Ledger | 本地 P0 可用；PostgreSQL Run/Event、SSE、取消和 endpoint ingestion 已实现，正迁移为 Platform 内部的运行状态与评测记录服务 |
+| GitHub 身份与小八社区 | 本地 MVP 已实现；目标架构复用 Platform 的登录/Project 边界，社区继续保持实验功能 |
 | SkillsBench 派生 starter | 1 个固定任务，可通过当前 CLI 验证评测链路，不是官方成绩 |
 | SkillsBench v1.1 公开方法验证 | 24 个任务、144 次终态运行；36 个严格匹配 pair，报告与海报已公开 |
 | XiaobaOS Role A/B | 暂时 held；迁移到普通目标契约中，禁止回退 Arena |
@@ -135,7 +142,7 @@ SkillsBench-derived 方法验证，不是官方 SkillsBench leaderboard 成绩�
 
 ## 框架架构
 
-Barena 只有一个产品、两种执行模式和一个比较操作：Replay 保护已知能力，Explore 通过用户模拟发现未知边界，Compare 对兼容的 baseline / candidate RunSet 做发布判断。所有 Runtime 调用统一经过 `AgentRuntimeAdapter`；行为 Trace 统一采用 OpenTelemetry，通过 OTLP 导出和接入。
+Barena 只有一个产品、两种执行模式和一个可选比较操作：Replay 保护已知能力，Explore 通过用户模拟发现未知边界，Compare 只在需要证明提升时比较兼容的 baseline / candidate RunSet。所有 Runtime 调用统一经过 `AgentRuntimeAdapter`；行为 Trace 统一采用 OpenTelemetry，通过 OTLP 导出和接入。
 
 ```mermaid
 flowchart LR
@@ -153,7 +160,8 @@ flowchart LR
     ReviewerCat["ReviewerCat<br/>XiaobaOS · 生成结论"]
     RunSets["Baseline / Candidate<br/>RunSets"]
     NewCase["Replay Case Candidate<br/>沉淀新问题"]
-    Result["Scorecard + Release Gate<br/>提升 · 稳定性 · 回归"]
+    Verdict["Single-run Verdict<br/>pass · fail · blocked · unsafe"]
+    Result["Release Gate<br/>cleared · held · rejected"]
 
     CLI --> Explore
     CLI --> Replay
@@ -169,9 +177,11 @@ flowchart LR
     Artifact --> InspectorCat
     InspectorCat --> ReviewerCat
     InspectorCat --> NewCase
-    ReviewerCat --> RunSets
+    ReviewerCat --> Verdict
+    Verdict --> RunSets
+    RunSets -->|"non-regression"| Result
     RunSets --> Compare
-    Compare --> Result
+    Compare -->|"improvement"| Result
 
     classDef entry fill:#eff6ff,stroke:#2563eb,color:#172554;
     classDef runtime fill:#f8fafc,stroke:#64748b,color:#0f172a;
@@ -182,12 +192,31 @@ flowchart LR
     class Adapter,Runtime runtime;
     class OTel,Artifact telemetry;
     class UserCat,InspectorCat,ReviewerCat evaluator;
-    class RunSets,NewCase,Result output;
+    class RunSets,NewCase,Verdict,Result output;
 ```
 
-这是一张执行 DAG，而不是流水线：Explore 先由 UserCat 驱动 Agent，Replay 直接执行固定 Case，二者共用同一个 `AgentRuntimeAdapter`；Runtime 产生的 OTel Trace 与 Artifact / Verifier 证据在 InspectorCat 汇合，经 ReviewerCat 形成 RunSets。Compare 只消费 baseline / candidate RunSets，再输出 Scorecard 与发布门禁。`Replay Case Candidate` 是本轮 DAG 的输出，显式确认后才进入下一轮 Replay。
+这是一张执行 DAG，而不是流水线：Explore 先由 UserCat 驱动 Agent，Replay 直接执行固定 Case，二者共用同一个 `AgentRuntimeAdapter`；Runtime 产生的 OTel Trace 与 Artifact / Verifier 证据在 InspectorCat 汇合，经 ReviewerCat 形成单次 Verdict 与 RunSet。保护已知能力时，Release Gate 直接消费候选 Replay RunSet；只有证明提升时才进入 Compare。`Replay Case Candidate` 是本轮 DAG 的输出，显式确认后才进入下一轮 Replay。
 
 完整且锁定的组件、命令与遥测契约见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+
+## Barena Platform
+
+Barena Platform 面向 Agent Runtime 的持续进化，而不是再做一个通用 Trace
+Viewer：真实 Sessions 和主动 Explore 产生 Trace，失败进入 Issue Inbox，经
+人工确认沉淀为不可变 Case，再由 Replay / Compare 与 Release Gate 验证下一
+个 Harness Version。
+
+公开前端基于 Apache-2.0 的
+[`fightheyyy/barena-platform`](https://github.com/fightheyyy/barena-platform)
+下游 fork，复用登录、Project/API Key、OTLP、Trace 存储、搜索和 Waterfall；
+Go 后端负责 Run、Issue、Case、Harness Version、Evaluation 与 Release
+业务状态；TypeScript Engine 仍是唯一的 Explore / Replay / Compare、Judge
+和发布算法实现。
+
+XiaoBaOS 是第一方深度适配，OpenClaw、Claude Code、Codex、Hermes 等通过
+相同的 OTel、Runtime Adapter 与 Case 协议接入。第一条 Go 纵切已经支持将
+Run 中真实保留的 Trace 提升为 evidence-backed Issue，并经幂等审核生成唯一
+的不可变 Case revision。
 
 ## 安装
 
@@ -530,14 +559,16 @@ barena tui
 ```bash
 npm run check
 npm run pack:dry-run
+npm run test:platform
 ```
 
-回归测试覆盖选择式交互入口、XiaoBaOS Base/Role 多轮 Explore、UserCat/Inspector/Reviewer 严格 JSON、OTLP protobuf 接收与 span 解码、CLI/TUI、静态准入、路径与 symlink 防护、OpenClaw/Portable Driver、paired Skill evaluation、Artifact Verifier、run catalog 和打包入口。
+回归测试覆盖选择式交互入口、XiaoBaOS Base/Role 多轮 Explore、UserCat/Inspector/Reviewer 严格 JSON、OTLP protobuf 接收与 span 解码、CLI/TUI、静态准入、路径与 symlink 防护、OpenClaw/Portable Driver、paired Skill evaluation、Artifact Verifier、run catalog、Engine Worker、Go Run API/SSE/取消和打包入口。
 
-项目仍处于早期版本。当前可以把它当作“XiaoBaOS Explore + 固定 Replay +
-Skill Compare 发布门禁”的可运行 v0.1；Claude Code、Codex、OpenClaw 的
-Explore 深度适配、Replay/Compare 的交互式 TUI 配置，以及最终的
-RunSet-to-RunSet Compare 属于后续版本。
+项目仍处于早期版本。当前 CLI 可以运行 XiaoBaOS Explore、固定 Replay 与
+Skill improvement Compare；v0.2 已加入稳定的 Engine Protocol 和 Go 本地控制面
+基础层，但 Web、通用 non-regression Release Check、Claude Code/Codex/OpenClaw
+的 Explore 深度适配仍属于后续切片。平台启动说明见
+[`platform/README.md`](platform/README.md)。
 
 ## License
 

@@ -14,7 +14,11 @@ import {
   type RuntimeProbeResult,
   type RuntimeTurnResult,
 } from "../runtime-adapters";
-import { readXiaobaProjectSecretValues } from "../runtime-adapters/xiaoba-project-env";
+import {
+  isSecretEnvironmentName,
+  readXiaobaProjectSecretValues,
+} from "../runtime-adapters/xiaoba-project-env";
+import { assertSafeRunId } from "../runs/path-safety";
 import {
   copyDirectory,
   ensureDir,
@@ -55,9 +59,24 @@ const DEFAULT_EVALUATOR_ROLES = {
   reviewer: "reviewer-cat",
 } as const;
 
+interface ExploreCancellation {
+  isCancelled(): boolean;
+  detail(): string;
+  beginTurn(session: AgentRuntimeSession): Promise<boolean>;
+  endTurn(session: AgentRuntimeSession): void;
+  waitForPending(): Promise<void>;
+  dispose(): void;
+}
+
+type BlockedExploreStage = Extract<
+  ExploreStageResult<unknown>,
+  { status: "blocked" }
+>;
+
 function createProgressEmitter(
   observer: ExploreRunOptions["on_progress"],
-  now: () => Date
+  now: () => Date,
+  secrets: string[]
 ): (
   event: Omit<ExploreProgressEvent, "schema" | "sequence" | "timestamp">
 ) => Promise<void> {
@@ -69,9 +88,15 @@ function createProgressEmitter(
       sequence: ++sequence,
       timestamp: now().toISOString(),
       ...event,
-      ...(event.message && { message: boundedProgressText(event.message) }),
-      ...(event.reason && { reason: boundedProgressText(event.reason) }),
-      ...(event.summary && { summary: boundedProgressText(event.summary) }),
+      ...(event.message && {
+        message: boundedProgressText(event.message, secrets),
+      }),
+      ...(event.reason && {
+        reason: boundedProgressText(event.reason, secrets),
+      }),
+      ...(event.summary && {
+        summary: boundedProgressText(event.summary, secrets),
+      }),
     };
     try {
       await observer(bounded);
@@ -82,8 +107,8 @@ function createProgressEmitter(
   };
 }
 
-function boundedProgressText(value: string): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
+function boundedProgressText(value: string, secrets: string[]): string {
+  const normalized = redactTextValue(value, secrets).replace(/\s+/g, " ").trim();
   return normalized.length <= 1_200
     ? normalized
     : `${normalized.slice(0, 1_199)}…`;
@@ -95,10 +120,10 @@ export async function runExploreScenario(
 ): Promise<ExploreResultV1> {
   const scenario = validateExploreScenario(rawScenario);
   const now = options.now ?? (() => new Date());
-  const emitProgress = createProgressEmitter(options.on_progress, now);
   const createdAt = now();
-  const runId = createRunId(createdAt);
-  const runRoot = path.resolve(options.runs_root ?? "runs", runId);
+  const runId = options.run_id ?? createRunId(createdAt);
+  assertSafeRunId(runId);
+  const runRoot = reserveRunRoot(options.runs_root ?? "runs", runId);
   const paths = createRunLayout(runRoot);
   const roles = {
     user_simulator:
@@ -120,12 +145,14 @@ export async function runExploreScenario(
       ...(scenario.target.env_allowlist ?? []),
     ]),
   ]
+    .filter(isSecretEnvironmentName)
     .map((name) => process.env[name])
     .filter((value): value is string => Boolean(value));
   const secrets = [
     ...readXiaobaProjectSecretValues(configuredInstallation.project_root),
     ...envSecretValues,
   ];
+  const emitProgress = createProgressEmitter(options.on_progress, now, secrets);
   let adapter: AgentRuntimeAdapter;
   let snapshotSecretRedaction = emptySecretRedaction();
   if (options.runtime_adapter) {
@@ -141,12 +168,63 @@ export async function runExploreScenario(
     adapter = createdRuntime.adapter;
     snapshotSecretRedaction = createdRuntime.secretRedaction;
   }
-  const receiver = new OtlpTraceReceiver({ run_root: runRoot, secrets });
+  const rootTraceId = resolveRootTraceId(options.root_trace_id);
+  const receiver = new OtlpTraceReceiver({
+    run_root: runRoot,
+    secrets,
+    ...(options.otlp_forward && { forward: options.otlp_forward }),
+  });
   await receiver.start();
-  const rootTraceId = crypto.randomBytes(16).toString("hex");
+  const cancellation = createExploreCancellation(adapter, options.signal);
 
-  let probe: RuntimeProbeResult;
+  const finishBeforeTarget = async (
+    probe: RuntimeProbeResult,
+    override?: { reason_code: string; summary: string }
+  ): Promise<ExploreResultV1> => {
+    const manifest = await receiver.stop();
+    const secretRedaction = mergeSecretRedactions(
+      snapshotSecretRedaction,
+      redactSecretsInDirectory(runRoot, secrets)
+    );
+    const result = blockedBeforeExecution({
+      runId,
+      scenario,
+      createdAt,
+      completedAt: now(),
+      probe,
+      roles,
+      manifest,
+      adapter,
+      secretRedaction,
+      rootTraceId,
+      ...override,
+    });
+    const persisted = persistResult(paths, redactExploreResult(result, secrets));
+    await emitProgress({
+      actor: "barena",
+      stage: "complete",
+      status: "blocked",
+      summary: persisted.summary,
+      evidence: {
+        otlp_envelopes: manifest.envelope_count,
+        otlp_spans: manifest.span_count,
+        workspace_changes: 0,
+      },
+    });
+    return persisted;
+  };
+
+  let probe: RuntimeProbeResult | undefined;
   try {
+    if (cancellation.isCancelled()) {
+      return await finishBeforeTarget(
+        cancelledProbe(adapter, cancellation.detail()),
+        {
+          reason_code: "run_cancelled",
+          summary: cancellation.detail(),
+        }
+      );
+    }
     await emitProgress({
       actor: "barena",
       stage: "probe",
@@ -161,6 +239,12 @@ export async function runExploreScenario(
         roles.reviewer,
       ],
     });
+    if (cancellation.isCancelled()) {
+      return await finishBeforeTarget(probe, {
+        reason_code: "run_cancelled",
+        summary: cancellation.detail(),
+      });
+    }
     if (probe.status === "blocked") {
       await emitProgress({
         actor: "barena",
@@ -168,35 +252,7 @@ export async function runExploreScenario(
         status: "blocked",
         summary: probe.detail,
       });
-      const manifest = await receiver.stop();
-      const secretRedaction = mergeSecretRedactions(
-        snapshotSecretRedaction,
-        redactSecretsInDirectory(runRoot, secrets)
-      );
-      const result = blockedBeforeExecution({
-        runId,
-        scenario,
-        createdAt,
-        completedAt: now(),
-        probe,
-        roles,
-        manifest,
-        adapter,
-        secretRedaction,
-      });
-      const persisted = persistResult(paths, result);
-      await emitProgress({
-        actor: "barena",
-        stage: "complete",
-        status: "blocked",
-        summary: result.summary,
-        evidence: {
-          otlp_envelopes: manifest.envelope_count,
-          otlp_spans: manifest.span_count,
-          workspace_changes: 0,
-        },
-      });
-      return persisted;
+      return await finishBeforeTarget(probe);
     }
     await emitProgress({
       actor: "barena",
@@ -214,24 +270,36 @@ export async function runExploreScenario(
       | undefined;
     let userStoppedWithoutTurn = false;
 
-    const userSession = await openSession(adapter, {
-      runId,
-      scenario,
-      role: roles.user_simulator,
-      stage: "user-simulator",
-      workspace: paths.user_workspace,
-    });
-    const targetSession = await openSession(adapter, {
-      runId,
-      scenario,
-      role: scenario.target.role,
-      stage: "target",
-      workspace: paths.target_workspace,
-      target: true,
-    });
-
+    let userSession: AgentRuntimeSession | undefined;
+    let targetSession: AgentRuntimeSession | undefined;
     try {
+      if (!cancellation.isCancelled()) {
+        userSession = await openSession(adapter, {
+          runId,
+          scenario,
+          role: roles.user_simulator,
+          stage: "user-simulator",
+          workspace: paths.user_workspace,
+        });
+      }
+      if (!cancellation.isCancelled()) {
+        targetSession = await openSession(adapter, {
+          runId,
+          scenario,
+          role: scenario.target.role,
+          stage: "target",
+          workspace: paths.target_workspace,
+          target: true,
+        });
+      }
+      if (cancellation.isCancelled() || !userSession || !targetSession) {
+        terminalRuntime = cancelledRuntime(cancellation.detail());
+      }
       for (let turn = 1; turn <= scenario.max_turns; turn += 1) {
+        if (cancellation.isCancelled() || !userSession || !targetSession) {
+          terminalRuntime = cancelledRuntime(cancellation.detail());
+          break;
+        }
         await emitProgress({
           actor: "user_simulator",
           stage: "user_simulator",
@@ -258,6 +326,7 @@ export async function runExploreScenario(
           role: roles.user_simulator,
           turn,
           boundaryTrace: paths.boundary_trace,
+          cancellation,
         });
         fs.writeFileSync(
           userRawRef,
@@ -265,6 +334,28 @@ export async function runExploreScenario(
           "utf8"
         );
         for (const ref of userResult.native_trace_refs) nativeTraceRefs.add(ref);
+        if (cancellation.isCancelled()) {
+          terminalRuntime = cancelledRuntime(cancellation.detail());
+          turns.push({
+            turn,
+            user_simulator: {
+              decision: {
+                action: "stop",
+                reason: terminalRuntime.detail,
+              },
+              raw_ref: userRawRef,
+              process: processSummary(userResult),
+            },
+          });
+          await emitProgress({
+            actor: "user_simulator",
+            stage: "user_simulator",
+            status: "blocked",
+            turn,
+            summary: terminalRuntime.detail,
+          });
+          break;
+        }
         if (userResult.status !== "completed" || !userResult.assistant) {
           terminalRuntime = {
             status: userResult.status,
@@ -344,6 +435,10 @@ export async function runExploreScenario(
               ? "Produced the next user message."
               : "Stopped the simulated conversation.",
         });
+        if (cancellation.isCancelled()) {
+          terminalRuntime = cancelledRuntime(cancellation.detail());
+          break;
+        }
 
         if (decision.action === "stop") {
           if (!transcript.some((message) => message.actor === "target")) {
@@ -382,8 +477,25 @@ export async function runExploreScenario(
           role: scenario.target.role,
           turn,
           boundaryTrace: paths.boundary_trace,
+          cancellation,
         });
         for (const ref of targetResult.native_trace_refs) nativeTraceRefs.add(ref);
+        if (cancellation.isCancelled()) {
+          turnRecord.target = {
+            response: targetResult.assistant?.content ?? "",
+            process: processSummary(targetResult),
+            native_trace_refs: targetResult.native_trace_refs,
+          };
+          terminalRuntime = cancelledRuntime(cancellation.detail());
+          await emitProgress({
+            actor: "target",
+            stage: "target",
+            status: "blocked",
+            turn,
+            summary: terminalRuntime.detail,
+          });
+          break;
+        }
         if (targetResult.status !== "completed" || !targetResult.assistant) {
           turnRecord.target = {
             response: "",
@@ -426,7 +538,12 @@ export async function runExploreScenario(
         });
       }
     } finally {
-      await Promise.all([adapter.close(userSession), adapter.close(targetSession)]);
+      await cancellation.waitForPending();
+      await Promise.all(
+        [userSession, targetSession]
+          .filter((session): session is AgentRuntimeSession => Boolean(session))
+          .map((session) => adapter.close(session))
+      );
     }
 
     const afterWorkspace = snapshotExploreWorkspace(paths.target_workspace);
@@ -440,7 +557,15 @@ export async function runExploreScenario(
     }
 
     let inspectorStage: ExploreStageResult<InspectorOutput>;
-    if (userStoppedWithoutTurn) {
+    if (cancellation.isCancelled()) {
+      inspectorStage = cancelledStage(cancellation.detail());
+      await emitProgress({
+        actor: "inspector",
+        stage: "inspector",
+        status: "blocked",
+        summary: inspectorStage.detail,
+      });
+    } else if (userStoppedWithoutTurn) {
       inspectorStage = {
         status: "blocked",
         detail: "User simulator stopped before the target Role produced any observable turn.",
@@ -471,7 +596,11 @@ export async function runExploreScenario(
         runId,
         role: roles.inspector,
         paths,
+        cancellation,
       });
+      if (cancellation.isCancelled()) {
+        inspectorStage = cancelledStage(cancellation.detail(), inspectorStage);
+      }
       await emitProgress(
         inspectorStage.status === "completed"
           ? {
@@ -494,7 +623,18 @@ export async function runExploreScenario(
     }
 
     let reviewerStage: ExploreStageResult<ReviewerOutput>;
-    if (inspectorStage.status !== "completed") {
+    if (cancellation.isCancelled()) {
+      reviewerStage = {
+        status: "not_run",
+        detail: "Reviewer did not run because Explore was cancelled.",
+      };
+      await emitProgress({
+        actor: "reviewer",
+        stage: "reviewer",
+        status: "skipped",
+        summary: reviewerStage.detail,
+      });
+    } else if (inspectorStage.status !== "completed") {
       reviewerStage = {
         status: "not_run",
         detail: "Reviewer did not run because Inspector evidence was unavailable.",
@@ -524,7 +664,11 @@ export async function runExploreScenario(
         runId,
         role: roles.reviewer,
         paths,
+        cancellation,
       });
+      if (cancellation.isCancelled()) {
+        reviewerStage = cancelledStage(cancellation.detail(), reviewerStage);
+      }
       await emitProgress(
         reviewerStage.status === "completed"
           ? {
@@ -558,6 +702,7 @@ export async function runExploreScenario(
       .filter((envelope) => envelope.invocation?.stage === "target")
       .reduce((sum, envelope) => sum + envelope.decoded_span_count, 0);
     const evidenceComplete =
+      !cancellation.isCancelled() &&
       targetOtlpSpans > 0 &&
       manifest.span_count > 0 &&
       unsafeWorkspaceEntries.length === 0 &&
@@ -566,6 +711,21 @@ export async function runExploreScenario(
       reviewerStage.status === "completed";
     const finalEvidenceComplete =
       evidenceComplete && secretRedaction.unscanned_files.length === 0;
+    await emitProgress({
+      actor: "barena",
+      stage: "evidence",
+      status: finalEvidenceComplete ? "completed" : "blocked",
+      summary: cancellation.isCancelled()
+        ? "Explore was cancelled; retained partial evidence cannot pass."
+        : finalEvidenceComplete
+          ? "Required execution evidence is complete."
+          : "Required execution evidence is incomplete.",
+      evidence: {
+        otlp_envelopes: manifest.envelope_count,
+        otlp_spans: manifest.span_count,
+        workspace_changes: workspaceChanges.length,
+      },
+    });
     const derived = deriveOutcome({
       reviewer: reviewerStage,
       inspector: inspectorStage,
@@ -573,22 +733,11 @@ export async function runExploreScenario(
       userStoppedWithoutTurn,
       evidenceComplete: finalEvidenceComplete,
       unsafeWorkspaceEntries,
-    });
-    await emitProgress({
-      actor: "barena",
-      stage: "evidence",
-      status: finalEvidenceComplete ? "completed" : "blocked",
-      summary: finalEvidenceComplete
-        ? "Required execution evidence is complete."
-        : "Required execution evidence is incomplete.",
-      evidence: {
-        otlp_envelopes: manifest.envelope_count,
-        otlp_spans: manifest.span_count,
-        workspace_changes: workspaceChanges.length,
-      },
+      cancelled: cancellation.isCancelled(),
+      cancellationDetail: cancellation.detail(),
     });
     const replayCandidates =
-      inspectorStage.status === "completed"
+      !cancellation.isCancelled() && inspectorStage.status === "completed"
         ? createReplayCandidates(
             runId,
             scenario,
@@ -625,6 +774,12 @@ export async function runExploreScenario(
         native_otlp_envelopes: manifest.envelope_count,
         native_otlp_spans: manifest.span_count,
         native_otlp_required: true,
+        root_trace_id: rootTraceId,
+        native_trace_ids: manifest.trace_ids,
+        ...(manifest.primary_trace_id && {
+          primary_native_trace_id: manifest.primary_trace_id,
+        }),
+        ...(manifest.forwarding && { otlp_forwarding: manifest.forwarding }),
         workspace_changes: workspaceChanges,
         unsafe_workspace_entries: unsafeWorkspaceEntries,
         native_trace_refs: [...nativeTraceRefs].sort(),
@@ -638,14 +793,14 @@ export async function runExploreScenario(
         report_markdown: paths.report_markdown,
       },
     };
-    const persisted = persistResult(paths, result);
+    const persisted = persistResult(paths, redactExploreResult(result, secrets));
     await emitProgress({
       actor: "barena",
       stage: "complete",
       status: result.status === "blocked" ? "blocked" : "completed",
-      summary: result.summary,
-      ...(reviewerStage.status === "completed" && {
-        verdict: reviewerStage.output.verdict,
+      summary: persisted.summary,
+      ...(persisted.reviewer.status === "completed" && {
+        verdict: persisted.reviewer.output.verdict,
       }),
       evidence: {
         otlp_envelopes: manifest.envelope_count,
@@ -663,6 +818,8 @@ export async function runExploreScenario(
       summary: error instanceof Error ? error.message : String(error),
     });
     throw error;
+  } finally {
+    cancellation.dispose();
   }
 }
 
@@ -678,6 +835,7 @@ async function runInspector(input: {
   runId: string;
   role: string;
   paths: ReturnType<typeof createRunLayout>;
+  cancellation: ExploreCancellation;
 }): Promise<ExploreStageResult<InspectorOutput>> {
   const session = await openSession(input.adapter, {
     runId: input.runId,
@@ -716,6 +874,7 @@ async function runInspector(input: {
       actor: "inspector",
       role: input.role,
       boundaryTrace: input.paths.boundary_trace,
+      cancellation: input.cancellation,
     });
     const raw = result.assistant?.content ?? result.process.stdout;
     fs.writeFileSync(input.paths.inspector_raw, `${raw}\n`, "utf8");
@@ -749,6 +908,7 @@ async function runInspector(input: {
       };
     }
   } finally {
+    await input.cancellation.waitForPending();
     await input.adapter.close(session);
   }
 }
@@ -765,6 +925,7 @@ async function runReviewer(input: {
   runId: string;
   role: string;
   paths: ReturnType<typeof createRunLayout>;
+  cancellation: ExploreCancellation;
 }): Promise<ExploreStageResult<ReviewerOutput>> {
   const session = await openSession(input.adapter, {
     runId: input.runId,
@@ -799,6 +960,7 @@ async function runReviewer(input: {
       actor: "reviewer",
       role: input.role,
       boundaryTrace: input.paths.boundary_trace,
+      cancellation: input.cancellation,
     });
     const raw = result.assistant?.content ?? result.process.stdout;
     fs.writeFileSync(input.paths.reviewer_raw, `${raw}\n`, "utf8");
@@ -832,6 +994,7 @@ async function runReviewer(input: {
       };
     }
   } finally {
+    await input.cancellation.waitForPending();
     await input.adapter.close(session);
   }
 }
@@ -883,6 +1046,7 @@ async function invokeRole(input: {
   role: string;
   turn?: number;
   boundaryTrace: string;
+  cancellation: ExploreCancellation;
 }): Promise<RuntimeTurnResult> {
   const context: OtlpInvocationContext = {
     run_id: input.runId,
@@ -894,110 +1058,125 @@ async function invokeRole(input: {
     role: input.role,
     ...(input.turn && { turn: input.turn }),
   };
-  input.receiver.setContext(context);
-  writeBoundaryEvents(input.boundaryTrace, [
-    boundaryEvent({
-      runId: input.runId,
-      caseId: input.scenarioId,
-      attemptId: input.attemptId,
-      component: `${input.adapter.id}:${input.role}`,
-      observedFrom: "target_input",
-      kind: "user",
+  if (!(await input.cancellation.beginTurn(input.session))) {
+    return cancelledTurnResult(input.adapter, input.cancellation.detail());
+  }
+  try {
+    input.receiver.setContext(context);
+    writeBoundaryEvents(input.boundaryTrace, [
+      boundaryEvent({
+        runId: input.runId,
+        caseId: input.scenarioId,
+        attemptId: input.attemptId,
+        component: `${input.adapter.id}:${input.role}`,
+        observedFrom: "target_input",
+        kind: "user",
+        message: input.prompt,
+        data: {
+          actor: input.actor,
+          stage: input.stage,
+          role: input.role,
+          session_id: input.session.session_id,
+          prompt_sha256: crypto.createHash("sha256").update(input.prompt).digest("hex"),
+          ...(input.turn && { turn: input.turn }),
+        },
+      }),
+    ]);
+    const result = await input.adapter.sendTurn(input.session, {
       message: input.prompt,
-      data: {
-        actor: input.actor,
-        stage: input.stage,
-        role: input.role,
-        session_id: input.session.session_id,
-        prompt_sha256: crypto.createHash("sha256").update(input.prompt).digest("hex"),
-        ...(input.turn && { turn: input.turn }),
+      timeout_ms: input.timeoutMs,
+      telemetry: {
+        traces_endpoint: input.receiver.endpoint,
+        protocol: "http/protobuf",
+        service_name: `barena-xiaoba-${input.actor}`,
+        traceparent: `00-${input.rootTraceId}-${crypto.randomBytes(8).toString("hex")}-01`,
+        export_timeout_ms: Math.min(input.timeoutMs, 10_000),
+        resource_attributes: {
+          "barena.run.id": input.runId,
+          "barena.scenario.id": input.scenarioId,
+          "barena.attempt.id": input.attemptId,
+          "barena.mode": "explore",
+          "barena.arm": "single",
+          "barena.runtime.name": input.adapter.id,
+          "barena.session.id": input.session.session_id,
+          "barena.actor": input.actor,
+          "barena.evidence.source": "runtime_native",
+          "barena.target.role": input.role,
+          "barena.root.trace_id": input.rootTraceId,
+          ...(input.turn ? { "barena.turn": String(input.turn) } : {}),
+        },
       },
-    }),
-  ]);
-  const result = await input.adapter.sendTurn(input.session, {
-    message: input.prompt,
-    timeout_ms: input.timeoutMs,
-    telemetry: {
-      traces_endpoint: input.receiver.endpoint,
-      protocol: "http/protobuf",
-      service_name: `barena-xiaoba-${input.actor}`,
-      traceparent: `00-${input.rootTraceId}-${crypto.randomBytes(8).toString("hex")}-01`,
-      export_timeout_ms: Math.min(input.timeoutMs, 10_000),
-      resource_attributes: {
-        "barena.run.id": input.runId,
-        "barena.scenario.id": input.scenarioId,
-        "barena.attempt.id": input.attemptId,
-        "barena.mode": "explore",
-        "barena.arm": "single",
-        "barena.runtime.name": input.adapter.id,
-        "barena.session.id": input.session.session_id,
-        "barena.actor": input.actor,
-        "barena.evidence.source": "runtime_native",
-        "barena.target.role": input.role,
-        "barena.root.trace_id": input.rootTraceId,
-        ...(input.turn ? { "barena.turn": String(input.turn) } : {}),
-      },
-    },
-  });
-  writeBoundaryEvents(input.boundaryTrace, [
-    ...(result.assistant
-      ? [
-          boundaryEvent({
-            runId: input.runId,
-            caseId: input.scenarioId,
-            attemptId: input.attemptId,
-            component: `${input.adapter.id}:${input.role}`,
-            observedFrom: "target_stdout" as const,
-            kind: "assistant" as const,
-            message: result.assistant.content,
-            data: {
-              actor: input.actor,
-              stage: input.stage,
-              role: input.role,
-              session_id: input.session.session_id,
-              ...(input.turn && { turn: input.turn }),
-            },
-          }),
-        ]
-      : []),
-    ...(result.process.stderr.trim()
-      ? [
-          boundaryEvent({
-            runId: input.runId,
-            caseId: input.scenarioId,
-            attemptId: input.attemptId,
-            component: `${input.adapter.id}:${input.role}`,
-            observedFrom: "target_stderr" as const,
-            kind: "runtime_status" as const,
-            message: result.process.stderr.trim(),
-            data: { actor: input.actor, stage: input.stage },
-          }),
-        ]
-      : []),
-    boundaryEvent({
-      runId: input.runId,
-      caseId: input.scenarioId,
-      attemptId: input.attemptId,
-      component: `${input.adapter.id}:${input.role}`,
-      observedFrom: "target_process",
-      kind: "runtime_status",
-      message: result.detail,
-      data: {
-        actor: input.actor,
-        stage: input.stage,
-        role: input.role,
-        status: result.status,
-        reason_code: result.reason_code,
-        exit_code: result.process.exit_code,
-        signal: result.process.signal,
-        duration_ms: result.process.duration_ms,
-        telemetry_configured: result.telemetry.configured,
-        trace_context_propagated: result.telemetry.trace_context_propagated,
-        native_trace_refs: result.native_trace_refs,
-      },
-    }),
-  ]);
-  return result;
+    });
+    writeBoundaryEvents(input.boundaryTrace, [
+      ...(result.assistant
+        ? [
+            boundaryEvent({
+              runId: input.runId,
+              caseId: input.scenarioId,
+              attemptId: input.attemptId,
+              component: `${input.adapter.id}:${input.role}`,
+              observedFrom: "target_stdout" as const,
+              kind: "assistant" as const,
+              message: result.assistant.content,
+              data: {
+                actor: input.actor,
+                stage: input.stage,
+                role: input.role,
+                session_id: input.session.session_id,
+                ...(input.turn && { turn: input.turn }),
+              },
+            }),
+          ]
+        : []),
+      ...(result.process.stderr.trim()
+        ? [
+            boundaryEvent({
+              runId: input.runId,
+              caseId: input.scenarioId,
+              attemptId: input.attemptId,
+              component: `${input.adapter.id}:${input.role}`,
+              observedFrom: "target_stderr" as const,
+              kind: "runtime_status" as const,
+              message: result.process.stderr.trim(),
+              data: { actor: input.actor, stage: input.stage },
+            }),
+          ]
+        : []),
+      boundaryEvent({
+        runId: input.runId,
+        caseId: input.scenarioId,
+        attemptId: input.attemptId,
+        component: `${input.adapter.id}:${input.role}`,
+        observedFrom: "target_process",
+        kind: "runtime_status",
+        message: result.detail,
+        data: {
+          actor: input.actor,
+          stage: input.stage,
+          role: input.role,
+          status: result.status,
+          reason_code: result.reason_code,
+          exit_code: result.process.exit_code,
+          signal: result.process.signal,
+          duration_ms: result.process.duration_ms,
+          telemetry_configured: result.telemetry.configured,
+          trace_context_propagated: result.telemetry.trace_context_propagated,
+          native_trace_refs: result.native_trace_refs,
+        },
+      }),
+    ]);
+    return result;
+  } catch (error) {
+    if (input.cancellation.isCancelled()) {
+      return cancelledTurnResult(
+        input.adapter,
+        `${input.cancellation.detail()} The active Runtime turn did not return a result.`
+      );
+    }
+    throw error;
+  } finally {
+    input.cancellation.endTurn(input.session);
+  }
 }
 
 function createIsolatedXiaobaAdapter(
@@ -1170,7 +1349,16 @@ function deriveOutcome(input: {
   userStoppedWithoutTurn: boolean;
   evidenceComplete: boolean;
   unsafeWorkspaceEntries: string[];
+  cancelled: boolean;
+  cancellationDetail: string;
 }): { status: ExploreResultV1["status"]; reason_code?: string; summary: string } {
+  if (input.cancelled) {
+    return {
+      status: "blocked",
+      reason_code: "run_cancelled",
+      summary: input.cancellationDetail,
+    };
+  }
   if (
     input.unsafeWorkspaceEntries.length > 0 ||
     input.terminalRuntime?.status === "unsafe" ||
@@ -1276,6 +1464,9 @@ function blockedBeforeExecution(input: {
   manifest: OtlpReceiverManifest;
   adapter: AgentRuntimeAdapter;
   secretRedaction: ReturnType<typeof redactSecretsInDirectory>;
+  rootTraceId: string;
+  reason_code?: string;
+  summary?: string;
 }): ExploreResultV1 {
   const actualRunRoot = path.resolve(
     path.dirname(input.manifest.manifest_ref),
@@ -1290,8 +1481,9 @@ function blockedBeforeExecution(input: {
     created_at: input.createdAt.toISOString(),
     completed_at: input.completedAt.toISOString(),
     status: "blocked",
-    reason_code: input.probe.reason_code ?? "runtime_probe_blocked",
-    summary: input.probe.detail,
+    reason_code:
+      input.reason_code ?? input.probe.reason_code ?? "runtime_probe_blocked",
+    summary: input.summary ?? input.probe.detail,
     scenario: input.scenario,
     runtime: {
       probe: input.probe,
@@ -1301,8 +1493,18 @@ function blockedBeforeExecution(input: {
     },
     transcript: [],
     turns: [],
-    inspector: { status: "not_run", detail: "Runtime probe failed." },
-    reviewer: { status: "not_run", detail: "Runtime probe failed." },
+    inspector: {
+      status: "not_run",
+      detail: input.reason_code === "run_cancelled"
+        ? "Inspector did not run because Explore was cancelled."
+        : "Runtime probe failed.",
+    },
+    reviewer: {
+      status: "not_run",
+      detail: input.reason_code === "run_cancelled"
+        ? "Reviewer did not run because Explore was cancelled."
+        : "Runtime probe failed.",
+    },
     replay_case_candidates: [],
     evidence: {
       boundary_trace: path.join(actualRunRoot, "traces", "boundary.ndjson"),
@@ -1311,6 +1513,14 @@ function blockedBeforeExecution(input: {
       native_otlp_envelopes: input.manifest.envelope_count,
       native_otlp_spans: input.manifest.span_count,
       native_otlp_required: true,
+      root_trace_id: input.rootTraceId,
+      native_trace_ids: input.manifest.trace_ids,
+      ...(input.manifest.primary_trace_id && {
+        primary_native_trace_id: input.manifest.primary_trace_id,
+      }),
+      ...(input.manifest.forwarding && {
+        otlp_forwarding: input.manifest.forwarding,
+      }),
       workspace_changes: [],
       unsafe_workspace_entries: [],
       native_trace_refs: [],
@@ -1375,6 +1585,67 @@ function renderExploreReport(result: ExploreResultV1): string {
   ].join("\n");
 }
 
+function resolveRootTraceId(value: string | undefined): string {
+  const traceId = value ?? crypto.randomBytes(16).toString("hex");
+  if (!/^[a-f0-9]{32}$/.test(traceId) || /^0{32}$/.test(traceId)) {
+    throw new Error("Explore root Trace ID must be 32 lowercase hex characters.");
+  }
+  return traceId;
+}
+
+function redactExploreResult(
+  result: ExploreResultV1,
+  secrets: string[]
+): ExploreResultV1 {
+  const redacted = redactResultValue(result, secrets) as ExploreResultV1;
+  redacted.paths = { ...result.paths };
+  redacted.evidence.boundary_trace = result.evidence.boundary_trace;
+  redacted.evidence.otlp_manifest = result.evidence.otlp_manifest;
+  redacted.evidence.otlp_spans = result.evidence.otlp_spans;
+  redacted.evidence.native_trace_refs = [...result.evidence.native_trace_refs];
+  redacted.evidence.secret_redaction.files = [
+    ...result.evidence.secret_redaction.files,
+  ];
+  redacted.evidence.secret_redaction.unscanned_files = [
+    ...result.evidence.secret_redaction.unscanned_files,
+  ];
+  for (const [index, turn] of redacted.turns.entries()) {
+    turn.user_simulator.raw_ref = result.turns[index]!.user_simulator.raw_ref;
+  }
+  if (redacted.inspector.status !== "not_run" && result.inspector.status !== "not_run") {
+    redacted.inspector.raw_ref = result.inspector.raw_ref;
+  }
+  if (redacted.reviewer.status !== "not_run" && result.reviewer.status !== "not_run") {
+    redacted.reviewer.raw_ref = result.reviewer.raw_ref;
+  }
+  return redacted;
+}
+
+function redactResultValue(value: unknown, secrets: string[]): unknown {
+  if (typeof value === "string") return redactTextValue(value, secrets);
+  if (Array.isArray(value)) {
+    return value.map((item) => redactResultValue(item, secrets));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        redactResultValue(item, secrets),
+      ])
+    );
+  }
+  return value;
+}
+
+function redactTextValue(value: string, secrets: string[]): string {
+  let output = value;
+  for (const secret of secrets) {
+    if (!secret) continue;
+    output = output.split(secret).join("*".repeat(secret.length));
+  }
+  return output;
+}
+
 function createRunLayout(runRoot: string) {
   const paths = {
     run_root: runRoot,
@@ -1411,6 +1682,151 @@ function createRunLayout(runRoot: string) {
     ensureDir(directory);
   }
   return paths;
+}
+
+function reserveRunRoot(runsRoot: string, runId: string): string {
+  const root = path.resolve(runsRoot);
+  ensureDir(root);
+  const runRoot = path.join(root, runId);
+  try {
+    fs.mkdirSync(runRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error(`Explore run directory already exists and will not be reused: ${runRoot}`);
+    }
+    throw error;
+  }
+  return runRoot;
+}
+
+function createExploreCancellation(
+  adapter: AgentRuntimeAdapter,
+  signal: AbortSignal | undefined
+): ExploreCancellation {
+  const activeSessions = new Set<AgentRuntimeSession>();
+  const pending = new Set<Promise<unknown>>();
+
+  const cancelSession = (session: AgentRuntimeSession): void => {
+    const cancellation = adapter
+      .cancel(session, abortDetail(signal))
+      .catch(() => false);
+    pending.add(cancellation);
+    void cancellation.finally(() => pending.delete(cancellation));
+  };
+
+  const onAbort = () => {
+    for (const session of activeSessions) cancelSession(session);
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+
+  return {
+    isCancelled: () => signal?.aborted === true,
+    detail: () => abortDetail(signal),
+    beginTurn: async (session) => {
+      if (signal?.aborted) {
+        cancelSession(session);
+        await Promise.allSettled([...pending]);
+        return false;
+      }
+      activeSessions.add(session);
+      if (signal?.aborted) {
+        cancelSession(session);
+        await Promise.allSettled([...pending]);
+        activeSessions.delete(session);
+        return false;
+      }
+      return true;
+    },
+    endTurn: (session) => {
+      activeSessions.delete(session);
+    },
+    waitForPending: async () => {
+      await Promise.allSettled([...pending]);
+    },
+    dispose: () => {
+      signal?.removeEventListener("abort", onAbort);
+      activeSessions.clear();
+    },
+  };
+}
+
+function abortDetail(signal: AbortSignal | undefined): string {
+  const reason = signal?.reason;
+  if (reason instanceof Error && reason.message) {
+    return `Explore cancelled: ${reason.message}`;
+  }
+  if (typeof reason === "string" && reason.trim()) {
+    return `Explore cancelled: ${reason.trim()}`;
+  }
+  return "Explore cancelled by the caller.";
+}
+
+function cancelledProbe(
+  adapter: AgentRuntimeAdapter,
+  detail: string
+): RuntimeProbeResult {
+  return {
+    runtime_id: adapter.id,
+    status: "blocked",
+    reason_code: "turn_cancelled",
+    detail,
+    command: adapter.id,
+    capabilities: adapter.capabilities,
+    validated_targets: [],
+  };
+}
+
+function cancelledRuntime(detail: string): {
+  status: RuntimeTurnResult["status"];
+  reason_code: RuntimeTurnResult["reason_code"];
+  detail: string;
+} {
+  return {
+    status: "cancelled",
+    reason_code: "turn_cancelled",
+    detail,
+  };
+}
+
+function cancelledStage<T>(
+  detail: string,
+  previous?: ExploreStageResult<T>
+): BlockedExploreStage {
+  return {
+    status: "blocked",
+    detail,
+    reason_code: "turn_cancelled",
+    ...(previous && "raw_ref" in previous && previous.raw_ref
+      ? { raw_ref: previous.raw_ref }
+      : {}),
+    ...(previous && "process" in previous && previous.process
+      ? { process: previous.process }
+      : {}),
+  };
+}
+
+function cancelledTurnResult(
+  adapter: AgentRuntimeAdapter,
+  detail: string
+): RuntimeTurnResult {
+  return {
+    status: "cancelled",
+    reason_code: "turn_cancelled",
+    detail,
+    process: {
+      exit_code: null,
+      signal: null,
+      duration_ms: 0,
+      stdout: "",
+      stderr: "",
+    },
+    telemetry: {
+      mode: adapter.capabilities.telemetry,
+      configured: false,
+      trace_context_propagated: false,
+    },
+    native_trace_refs: [],
+  };
 }
 
 function createRunId(now: Date): string {

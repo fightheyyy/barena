@@ -7,7 +7,7 @@ import { loadSkillSelection, runSkillEvaluation } from "../evaluation/run-skill-
 import { XiaoBaNativeAttemptResult } from "../evaluation/xiaoba-native-types";
 import {
   createAdHocExploreScenario,
-  runExploreScenario,
+  runConnectedExploreScenario,
 } from "../explore";
 import {
   discoverLocalRuntimes,
@@ -186,7 +186,7 @@ async function performEffect(
   }
   if (effect.type === "run_explore") {
     try {
-      const result = await runExploreScenario(
+      const result = await runConnectedExploreScenario(
         createAdHocExploreScenario({
           role: effect.role,
           skill: effect.skill,

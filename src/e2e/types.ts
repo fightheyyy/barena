@@ -3,6 +3,7 @@ import type { StructuredArtifactAssertion } from "../verifier/artifact-verifier"
 export type AgentE2ERunStatus = "completed" | "failed" | "blocked" | "unsafe";
 
 export type AgentE2EReasonCode =
+  | "execution_cancelled"
   | "binary_not_found"
   | "binary_not_executable"
   | "cli_contract_missing"
@@ -44,12 +45,22 @@ export interface AgentE2ECaseV1 {
   schema: "barena.agent_e2e_case.v1";
   case_id: string;
   target: {
-    adapter: "openclaw" | "portable" | "xiaoba";
+    adapter: "http" | "openclaw" | "portable" | "xiaoba";
     runtime?: string;
     agent?: string;
     model?: string;
     thinking?: string;
     env_allowlist?: string[];
+    http?: {
+      url: string;
+      method: "POST";
+      output_path?:
+        | "$.response"
+        | "$.message"
+        | "$.content"
+        | "$.choices[0].message.content";
+      timeout_ms: number;
+    };
   };
   task: {
     prompt: string;
@@ -71,7 +82,7 @@ export interface AgentE2ECaseV1 {
 }
 
 export interface RuntimeProbeResult {
-  component: "xiaoba-evaluator" | "portable-evaluator" | "xiaoba-native-target" | "xiaoba-target" | "openclaw-target" | "portable-target";
+  component: "http-target" | "xiaoba-evaluator" | "portable-evaluator" | "xiaoba-native-target" | "xiaoba-target" | "openclaw-target" | "portable-target";
   status: "ready" | "blocked" | "not_started";
   reason_code?: AgentE2EReasonCode;
   detail: string;
@@ -111,6 +122,7 @@ export interface TargetInvocationRequest {
   run_id: string;
   case_id: string;
   attempt_id: string;
+  trace_id?: string;
   prompt: string;
   workspace: string;
   trace_path: string;
@@ -126,7 +138,7 @@ export interface TargetInvocationResult {
   exit_code: number | null;
   signal: NodeJS.Signals | null;
   duration_ms: number;
-  transport: "embedded" | "portable_json_driver";
+  transport: "embedded" | "http" | "portable_json_driver";
   payload_texts: string[];
   media_refs: string[];
   provider?: string;
@@ -134,6 +146,7 @@ export interface TargetInvocationResult {
   session_id?: string;
   native_trace_available: boolean;
   native_trace_refs?: string[];
+  boundary_trace_refs?: string[];
   observation_coverage: BoundaryObservedFrom[];
   trace_path: string;
   events: BoundaryTraceEvent[];
@@ -151,8 +164,10 @@ export interface EvaluatorRunRequest {
   case_base_dir: string;
   run_id: string;
   run_root: string;
+  trace_id: string;
   target_adapter: TargetAdapter;
   skill: TargetSkillConfig;
+  signal?: AbortSignal;
 }
 
 export interface EvaluatorRunResult {
@@ -235,6 +250,39 @@ export interface AgentE2EScorecard {
   evidence_refs: string[];
   debug_refs: string[];
   isolation: "policy_only";
+}
+
+export type AgentE2EProgressPhase =
+  | "probe"
+  | "attempt"
+  | "verifier"
+  | "aggregate"
+  | "complete";
+
+export type AgentE2EProgressStatus =
+  | "started"
+  | "completed"
+  | "blocked"
+  | "unsafe"
+  | "cancelled"
+  | "failed";
+
+export interface AgentE2EProgressEvent {
+  schema: "barena.agent_e2e_progress.v1";
+  sequence: number;
+  timestamp: string;
+  run_id: string;
+  phase: AgentE2EProgressPhase;
+  status: AgentE2EProgressStatus;
+  component?: "evaluator" | "target";
+  planned_attempts?: number;
+  attempt_index?: number;
+  attempt_id?: string;
+  attempt_status?: AgentE2EAttempt["status"];
+  verifier_passed?: boolean;
+  decision?: AgentE2EScorecard["decision"];
+  reason_code?: AgentE2EReasonCode;
+  summary?: string;
 }
 
 export interface PortableTargetProbeV1 {

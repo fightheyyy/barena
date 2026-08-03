@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import protobuf from "protobufjs";
 
@@ -23,6 +24,12 @@ if (argv[0] === "chat" && argv.includes("--help")) {
 if (argv[0] !== "chat") {
   console.error("unsupported command");
   process.exit(2);
+}
+
+if (process.env.FAKE_XIAOBA_ASCII_BANNER === "1") {
+  console.log("████  < Your AI Assistant !!! Meow Meow !!! >");
+  console.log("▀██▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄██▀");
+  console.log("");
 }
 
 const role = valueAfter("--role");
@@ -85,18 +92,59 @@ if (role === "reviewer-cat") {
   process.exit(0);
 }
 
+if (role === "evolution-cat") {
+  console.log(JSON.stringify({
+    candidate_type: "skill",
+    summary: "A deterministic minimal Skill candidate.",
+    activation: "next-session",
+  }));
+  process.exit(0);
+}
+
 if (role === "secretary-cat" || role === "base") {
+  const identity = crypto
+    .createHash("sha256")
+    .update(`${process.cwd()}:${role}`)
+    .digest("hex");
+  const sessionId = `fake-${identity.slice(0, 12)}`;
+  const traceDir = path.join(
+    process.cwd(),
+    "logs",
+    "sessions",
+    "cli",
+    sessionId,
+  );
+  fs.mkdirSync(traceDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(traceDir, "traces.jsonl"),
+    `${JSON.stringify({
+      schema_version: 3,
+      entry_type: "trace",
+      session_id: sessionId,
+      trace_id: identity.slice(0, 32),
+      span_id: identity.slice(32, 48),
+      user: { text: message },
+      assistant: {
+        text: "A deterministic XiaoBaOS fixture response.",
+        tool_calls: [],
+      },
+    })}\n`,
+    "utf8",
+  );
   fs.writeFileSync(
     path.join(process.cwd(), "plan.md"),
     "# 今日计划\n\n1. 先处理最紧急事项\n2. 用半小时拆解第二项\n3. 收尾复盘\n",
     "utf8",
   );
   const previousResponseVisible = message.includes("我先按紧急程度给你一个初版");
-  console.log(
-    previousResponseVisible
-      ? "可以。半小时分成：5 分钟明确结果、20 分钟完成核心步骤、5 分钟检查并记录下一步。"
-      : "我先按紧急程度给你一个初版：确认今天硬截止、完成影响最大的交付、最后留十分钟复盘。你有时间限制吗？",
-  );
+  const response = previousResponseVisible
+    ? "可以。半小时分成：5 分钟明确结果、20 分钟完成核心步骤、5 分钟检查并记录下一步。"
+    : "我先按紧急程度给你一个初版：确认今天硬截止、完成影响最大的交付、最后留十分钟复盘。你有时间限制吗？";
+  const adversarialSecret =
+    process.env.FAKE_XIAOBA_ECHO_VALUE === "1"
+      ? ` debug=${process.env.FAKE_XIAOBA_SECRET ?? ""}`
+      : "";
+  console.log(`${response}${adversarialSecret}`);
   process.exit(0);
 }
 
@@ -137,19 +185,24 @@ async function exportSpan(actorRole) {
   `;
   const type = protobuf.parse(source, { keepCase: true }).root.lookupType("ExportRequest");
   const start = BigInt(Date.now()) * 1_000_000n;
+  const traceContext = traceContextFromEnv();
   const body = type.encode(type.create({
     resource_spans: [{
       resource: {
         attributes: [
           { key: "service.name", value: { string_value: `fake-${actorRole}` } },
           { key: "barena.actor.role", value: { string_value: actorRole } },
+          ...resourceAttributesFromEnv(),
         ],
       },
       scope_spans: [{
         scope: { name: "fake-xiaoba", version: "0.2.0" },
         spans: [{
-          trace_id: Buffer.alloc(16, 1),
-          span_id: Buffer.alloc(8, 2),
+          trace_id: traceContext.traceId,
+          span_id: crypto.randomBytes(8),
+          ...(traceContext.parentSpanId && {
+            parent_span_id: traceContext.parentSpanId,
+          }),
           name: `xiaoba.${actorRole}.turn`,
           kind: 2,
           start_time_unix_nano: start.toString(),
@@ -166,4 +219,38 @@ async function exportSpan(actorRole) {
     body,
   });
   if (!response.ok) throw new Error(`OTLP receiver returned ${response.status}`);
+}
+
+function traceContextFromEnv() {
+  const match = process.env.TRACEPARENT?.match(
+    /^[0-9a-f]{2}-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/i,
+  );
+  return {
+    traceId: match
+      ? Buffer.from(match[1], "hex")
+      : crypto.randomBytes(16),
+    parentSpanId: match
+      ? Buffer.from(match[2], "hex")
+      : undefined,
+  };
+}
+
+function resourceAttributesFromEnv() {
+  return (process.env.OTEL_RESOURCE_ATTRIBUTES ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .flatMap((entry) => {
+      const separator = entry.indexOf("=");
+      if (separator <= 0) return [];
+      const key = entry.slice(0, separator);
+      if (key === "service.name" || key === "barena.actor.role") return [];
+      let value = entry.slice(separator + 1);
+      try {
+        value = decodeURIComponent(value);
+      } catch {
+        // Retain the original value when a third-party attribute is not encoded.
+      }
+      return [{ key, value: { string_value: value } }];
+    });
 }

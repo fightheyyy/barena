@@ -9,6 +9,7 @@ export async function runTargetObservationAttempts(input: {
   caseBaseDir: string;
   runId: string;
   runRoot: string;
+  traceId: string;
   targetAdapter: TargetAdapter;
   skill?: TargetSkillConfig;
 }): Promise<AgentE2EAttempt[]> {
@@ -29,6 +30,7 @@ export async function runTargetObservationAttempts(input: {
       run_id: input.runId,
       case_id: input.caseDefinition.case_id,
       attempt_id: attemptId,
+      trace_id: input.traceId,
       prompt: input.caseDefinition.task.prompt,
       workspace,
       trace_path: tracePath,

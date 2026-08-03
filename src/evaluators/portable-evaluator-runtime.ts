@@ -25,6 +25,7 @@ export class BarenaPortableEvaluatorRuntime implements EvaluatorRuntime {
       caseBaseDir: request.case_base_dir,
       runId: request.run_id,
       runRoot: request.run_root,
+      traceId: request.trace_id,
       targetAdapter: request.target_adapter,
       skill: request.skill,
     });
@@ -40,7 +41,7 @@ export class BarenaPortableEvaluatorRuntime implements EvaluatorRuntime {
       return portableResult(
         "blocked",
         "evidence_incomplete",
-        "Portable target attempts must report a distinct non-empty session_id for every started attempt.",
+        "Target attempts must report a distinct non-empty session_id for every started attempt.",
         attempts
       );
     }
@@ -48,8 +49,8 @@ export class BarenaPortableEvaluatorRuntime implements EvaluatorRuntime {
       "completed",
       undefined,
       attempts.every((attempt) => attempt.status === "pass")
-        ? "Portable target attempts completed with verifier-backed outcomes."
-        : "Portable target attempts completed; at least one deterministic verifier did not pass.",
+        ? "Target attempts completed with verifier-backed outcomes."
+        : "Target attempts completed; at least one deterministic verifier did not pass.",
       attempts
     );
   }

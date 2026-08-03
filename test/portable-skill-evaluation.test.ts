@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { runSkillEvaluation } from "../src/evaluation/run-skill-evaluation";
+import type { SkillEvaluationProgressEvent } from "../src/evaluation/types";
 import { PortableTargetAdapter } from "../src/targets/portable-target-adapter";
 import { writeJson } from "../src/utils/fs";
 
@@ -30,8 +31,10 @@ test("paired portable Skill evaluation clears stable Hermes-compatible lift", as
     isolation: { level: "policy_only", network: "disabled", writable_roots: ["workspace"] },
   });
 
+  const progress: SkillEvaluationProgressEvent[] = [];
   const result = await runSkillEvaluation({
     skillPath,
+    evaluation_id: "server-compare-001",
     targetId: "hermes",
     cases: [casePath],
     attemptsPerArm: 2,
@@ -41,8 +44,19 @@ test("paired portable Skill evaluation clears stable Hermes-compatible lift", as
       baseArgs: [fakePortableSkill],
       runtime: "hermes",
     }),
+    on_progress: (event) => {
+      progress.push(event);
+    },
   });
 
+  assert.equal(result.evaluation_id, "server-compare-001");
+  assert.equal(progress.at(-1)?.phase, "complete");
+  assert.equal(progress.at(-1)?.decision, "cleared");
+  assert.ok(progress.some((event) => event.phase === "verifier"));
+  assert.deepEqual(
+    progress.map((event) => event.sequence),
+    progress.map((_, index) => index + 1)
+  );
   assert.equal(result.decision, "cleared");
   assert.equal(result.reason_code, "positive_lift");
   assert.equal(result.baseline.pass_rate.value, 0);

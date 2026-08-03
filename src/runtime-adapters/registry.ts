@@ -58,7 +58,12 @@ const RUNTIMES: Array<{
   { id: "hermes", displayName: "Hermes", command: "hermes", exploreSupport: "pending" },
 ];
 
-const EVALUATOR_ROLES = new Set(["user-cat", "inspector-cat", "reviewer-cat"]);
+const EVALUATOR_ROLES = new Set([
+  "user-cat",
+  "inspector-cat",
+  "reviewer-cat",
+  "evolution-cat",
+]);
 const BASE_ROLE_IDS = new Set(["base", "default", "none"]);
 
 export function discoverLocalRuntimes(

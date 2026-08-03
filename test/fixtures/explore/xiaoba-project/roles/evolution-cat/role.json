@@ -1,0 +1,7 @@
+{
+  "name": "evolution-cat",
+  "displayName": "EvolutionCat",
+  "description": "Test Role, Skill, and Memory candidate builder.",
+  "promptFile": "system.md",
+  "inheritBaseSkills": false
+}

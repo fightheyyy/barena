@@ -3,6 +3,10 @@ import path from "node:path";
 
 const SECRET_NAME = /(API_?KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)/i;
 
+export function isSecretEnvironmentName(name: string): boolean {
+  return SECRET_NAME.test(name);
+}
+
 export function xiaobaProjectDotenvPath(
   projectRoot: string | undefined
 ): string | undefined {
@@ -26,7 +30,7 @@ export function readXiaobaProjectSecretValues(
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
     const match = line.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-    if (!match || !SECRET_NAME.test(match[1])) continue;
+    if (!match || !isSecretEnvironmentName(match[1])) continue;
     const value = parseDotenvValue(match[2]);
     if (value) secrets.push(value);
   }

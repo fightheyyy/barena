@@ -13,7 +13,7 @@ import type {
   WorkspaceChange,
 } from "../e2e/types";
 import { runProcess } from "../runtime/process-runner";
-import { copyDirectory, ensureDir, hashDirectory } from "../utils/fs";
+import { appendNdjson, copyDirectory, ensureDir, hashDirectory } from "../utils/fs";
 
 export interface XiaobaTargetAdapterConfig {
   command?: string;
@@ -39,6 +39,7 @@ export class XiaobaTargetAdapter implements TargetAdapter {
   private readonly projectRoot?: string;
   private readonly rolesRoot?: string;
   private readonly envAllowlist: string[];
+  private readonly envAllowlistConfigured: boolean;
   private readonly probeTimeoutMs: number;
   private readonly maxOutputBytes: number;
   private readonly killGraceMs: number;
@@ -50,6 +51,7 @@ export class XiaobaTargetAdapter implements TargetAdapter {
     this.projectRoot = config.projectRoot ? path.resolve(config.projectRoot) : undefined;
     this.rolesRoot = config.rolesRoot ? path.resolve(config.rolesRoot) : undefined;
     this.envAllowlist = config.envAllowlist ?? [];
+    this.envAllowlistConfigured = config.envAllowlist !== undefined;
     this.probeTimeoutMs = config.probeTimeoutMs ?? 5_000;
     this.maxOutputBytes = config.maxOutputBytes ?? 1024 * 1024;
     this.killGraceMs = config.killGraceMs ?? 500;
@@ -164,7 +166,22 @@ export class XiaobaTargetAdapter implements TargetAdapter {
       return this.blockedInvocation(request, "skill_stage_failed", "Barena could not stage the candidate Skill in the isolated XiaobaOS Skill root.");
     }
 
-    const envNames = [...new Set([...this.envAllowlist, ...(request.target.env_allowlist ?? [])])];
+    const requestedEnvNames = request.target.env_allowlist ?? [];
+    if (this.envAllowlistConfigured) {
+      const denied = requestedEnvNames.filter(
+        (name) => !this.envAllowlist.includes(name)
+      );
+      if (denied.length > 0) {
+        return this.blockedInvocation(
+          request,
+          "config_invalid",
+          `XiaobaOS Case requested environment names outside the Runner allowlist: ${denied.sort().join(", ")}.`
+        );
+      }
+    }
+    const envNames = this.envAllowlistConfigured
+      ? [...this.envAllowlist]
+      : [...new Set(requestedEnvNames)];
     const secrets = envNames.map((name) => process.env[name]).filter((value): value is string => Boolean(value));
     const attemptCorrelationId = `barena-${safeId(request.run_id)}-${safeId(request.case_id)}-${safeId(request.attempt_id)}`;
     const args = [
@@ -213,6 +230,7 @@ export class XiaobaTargetAdapter implements TargetAdapter {
       })
     );
 
+    const startedAt = new Date();
     const before = snapshotWorkspace(request.workspace);
     const result = await runProcess({
       command: this.command,
@@ -294,6 +312,15 @@ export class XiaobaTargetAdapter implements TargetAdapter {
       },
     }));
     writeBoundaryEvents(request.trace_path, events);
+    const boundaryTraceRef = writeBoundarySpan(
+      request,
+      startedAt,
+      classification.status === "completed" ? "OK" : "ERROR",
+      {
+        "barena.target.status": classification.status,
+        "barena.target.exit_code": result.exitCode ?? -1,
+      }
+    );
 
     const coverage: BoundaryObservedFrom[] = ["target_input", "target_process", "workspace"];
     if (stdout.length) coverage.push("target_stdout");
@@ -309,9 +336,10 @@ export class XiaobaTargetAdapter implements TargetAdapter {
       payload_texts: stdout.trim() ? [stdout.trim()] : [],
       media_refs: [],
       model: request.target.model,
-      session_id: nativeSessionId,
+      session_id: nativeSessionId ?? attemptCorrelationId,
       native_trace_available: nativeTraceRefs.length > 0,
       native_trace_refs: nativeTraceRefs,
+      boundary_trace_refs: [boundaryTraceRef],
       observation_coverage: coverage,
       trace_path: request.trace_path,
       events,
@@ -375,6 +403,15 @@ export class XiaobaTargetAdapter implements TargetAdapter {
       data: { status: "blocked", reason_code: reasonCode },
     })];
     writeBoundaryEvents(request.trace_path, events);
+    const boundaryTraceRef = writeBoundarySpan(
+      request,
+      new Date(),
+      "ERROR",
+      {
+        "barena.target.status": "blocked",
+        "barena.target.reason_code": reasonCode,
+      }
+    );
     return {
       status: "blocked",
       reason_code: reasonCode,
@@ -387,12 +424,52 @@ export class XiaobaTargetAdapter implements TargetAdapter {
       media_refs: [],
       native_trace_available: false,
       native_trace_refs: [],
+      boundary_trace_refs: [boundaryTraceRef],
       observation_coverage: ["target_process"],
       trace_path: request.trace_path,
       events,
       workspace_changes: [],
     };
   }
+}
+
+function writeBoundarySpan(
+  request: TargetInvocationRequest,
+  startedAt: Date,
+  status: "OK" | "ERROR",
+  attributes: Record<string, string | number | boolean>
+): string {
+  const traceId =
+    request.trace_id && /^[a-f0-9]{32}$/.test(request.trace_id)
+      ? request.trace_id
+      : crypto.randomBytes(16).toString("hex");
+  const traceRef = boundaryOTelRef(request.trace_path);
+  appendNdjson(traceRef, [
+    {
+      schema: "barena.boundary_otel_span.v1",
+      trace_id: traceId,
+      span_id: crypto.randomBytes(8).toString("hex"),
+      name: "barena.xiaoba.replay",
+      start_time: startedAt.toISOString(),
+      end_time: new Date().toISOString(),
+      status,
+      attributes: {
+        "barena.run.id": request.run_id,
+        "barena.case.id": request.case_id,
+        "barena.attempt.id": request.attempt_id,
+        "barena.provenance.layer": "adapter_boundary",
+        "barena.target.runtime": "xiaobaos",
+        ...attributes,
+      },
+    },
+  ]);
+  return traceRef;
+}
+
+function boundaryOTelRef(tracePath: string): string {
+  const directory = path.dirname(tracePath);
+  const base = path.basename(tracePath, path.extname(tracePath));
+  return path.join(directory, `${base}-otel.ndjson`);
 }
 
 function classify(

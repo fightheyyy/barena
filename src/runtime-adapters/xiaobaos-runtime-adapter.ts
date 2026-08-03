@@ -13,6 +13,7 @@ import { RuntimeProcessSupervisor, type SupervisedProcessResult } from "./proces
 import { resolveXiaobaInstallation, resolveXiaobaRole } from "./registry";
 import { buildRuntimeEnv } from "./telemetry";
 import {
+  isSecretEnvironmentName,
   readXiaobaProjectSecretValues,
   xiaobaProjectDotenvPath,
 } from "./xiaoba-project-env";
@@ -281,6 +282,7 @@ export class XiaobaOSRuntimeAdapter implements AgentRuntimeAdapter {
     const secrets = [
       ...this.projectSecrets,
       ...envNames
+        .filter(isSecretEnvironmentName)
         .map((name) => process.env[name])
         .filter((value): value is string => Boolean(value)),
     ];
@@ -529,10 +531,15 @@ function defaultXiaobaOutput(stdout: string): string {
   const marker = lines.findIndex((line) =>
     line.includes("Your AI Assistant !!! Meow Meow")
   );
-  return (marker >= 0 ? lines.slice(marker + 1) : lines)
-    .join("\n")
-    .replace(/^\s+/, "")
-    .trim();
+  const responseLines = marker >= 0 ? lines.slice(marker + 1) : lines;
+  while (
+    responseLines.length > 0 &&
+    (responseLines[0].trim() === "" ||
+      /^[▀▄█▐▌▓╗╔╝║═]+$/.test(responseLines[0].replace(/\s/g, "")))
+  ) {
+    responseLines.shift();
+  }
+  return responseLines.join("\n").trim();
 }
 
 function findNativeTraceFiles(root: string): string[] {

@@ -124,3 +124,41 @@ export interface SkillEvaluationAggregateInput {
   admission?: StaticAdmissionReportV1;
   debugRefs?: string[];
 }
+
+export type SkillEvaluationProgressPhase =
+  | "admission"
+  | "arm"
+  | "case"
+  | "probe"
+  | "attempt"
+  | "verifier"
+  | "aggregate"
+  | "complete";
+
+export type SkillEvaluationProgressStatus =
+  | "started"
+  | "completed"
+  | "blocked"
+  | "unsafe"
+  | "cancelled"
+  | "failed";
+
+export interface SkillEvaluationProgressEvent {
+  schema: "barena.skill_evaluation_progress.v1";
+  sequence: number;
+  timestamp: string;
+  evaluation_id: string;
+  phase: SkillEvaluationProgressPhase;
+  status: SkillEvaluationProgressStatus;
+  arm?: EvaluationRunRef["arm"];
+  case_id?: string;
+  run_id?: string;
+  planned_attempts?: number;
+  attempt_index?: number;
+  attempt_id?: string;
+  attempt_status?: AgentE2EScorecard["attempts"][number]["status"];
+  verifier_passed?: boolean;
+  decision?: SkillEvaluationResultV1["decision"];
+  reason_code?: SkillEvaluationReasonCode;
+  summary?: string;
+}

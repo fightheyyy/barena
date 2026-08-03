@@ -1,6 +1,6 @@
 # Barena Specification
 
-Version 2.1 — 2026-07-28
+Version 2.3 — 2026-07-31
 
 This document is authoritative for the current product boundary. Historical XiaobaOS Arena integration code and persisted result schemas may remain in the repository for migration tests and read-only run inspection, but they are not public execution paths and are excluded from the production build.
 
@@ -10,7 +10,9 @@ The locked target framework architecture is defined by [`ARCHITECTURE.md`](./ARC
 
 Barena is an **Agentic Eval and Release framework for Agent Harness evolution**.
 
-It evaluates a concrete baseline-to-candidate change across one or more reusable cases, preserves evidence of what actually happened, and emits one release decision:
+It evaluates a concrete candidate against known Case expectations or a
+baseline-to-candidate improvement claim, preserves evidence of what actually
+happened, and emits one release decision:
 
 - `cleared`: complete, stable, verifier-backed positive result;
 - `held`: blocked, incomplete, unstable, or no demonstrated improvement;
@@ -53,7 +55,9 @@ flowchart LR
     E2E["barena explore<br/>用户模拟驱动Agent E2E"]
     Evidence["真实执行证据<br/>Trace + Artifact + Verifier"]
     Review["Inspector + Reviewer<br/>分析提升、回归与失败原因"]
+    RunSets["Replay / Explore RunSets"]
     Compare["barena compare<br/>baseline ↔ candidate"]
+    Gate["Release Check<br/>non_regression · improvement"]
     Decision["可审计的进化结论<br/>cleared / held / rejected"]
     NewCase["发现的新问题<br/>显式沉淀为Replay Case"]
 
@@ -65,8 +69,11 @@ flowchart LR
     Replay --> Evidence
     E2E --> Evidence
     Evidence --> Review
-    Review --> Compare
-    Compare --> Decision
+    Review --> RunSets
+    RunSets --> Gate
+    RunSets --> Compare
+    Compare --> Gate
+    Gate --> Decision
     Review --> NewCase
     NewCase -.-> Replay
 ```
@@ -101,6 +108,122 @@ flowchart LR
 ```
 
 Normative details, telemetry attributes, and invariants are in `docs/ARCHITECTURE.md`.
+
+### 3.2 Platform execution boundary
+
+The delivered v0.2 loopback path adds Barena Web and a Go `barena-server` over
+the existing TypeScript evaluation Engine. The current Server can manage a
+local Node worker through:
+
+- `barena.engine_request.v1`;
+- `barena.engine_event.v1`;
+- `barena.run_package.v1`.
+
+The target has two subject-execution planes, one evidence plane, and one
+platform-owned evaluator/evolution plane:
+
+- **Platform HTTP Explore** reuses the fork's existing Scenario runtime. It
+  invokes a registered external HTTP Agent, runs its User Simulator and
+  trace-aware Judge, and retains conversation plus OTLP evidence. The target
+  Agent Runtime is not hosted inside Barena.
+- **Endpoint execution** runs the TypeScript Engine beside XiaoBaOS or another
+  local/private Runtime through `AgentRuntimeAdapter`.
+- **Cloud evaluator/evolution execution** embeds one dedicated XiaoBaOS
+  Runtime in Barena Platform. It may execute only `UserCat`, `InspectorCat`,
+  `ReviewerCat`, and `EvolutionCat`; it never serves as the user's target
+  Agent. It turns completed evidence into findings, Cases, semantic review,
+  and Role/Skill/Memory candidates while Go retains workflow authority.
+- **Evolution records** adopt completed evidence into Go, curate Issue ->
+  immutable Case, run deterministic Replay in the TypeScript Engine, and
+  persist the resulting Evaluation/Release records.
+
+The Apache-2.0 Barena Platform fork supplies the LangWatch-derived frontend,
+authentication/project boundary, registered HTTP Agents, Scenario execution,
+OTLP ingestion, and Trace views. Go owns Run lifecycle, Issues, Cases, Harness
+Version lineage, immutable Run Packages, and decision records. A completed
+Scenario run is adopted, never re-executed or re-judged. Go validates records
+without deriving a second verdict.
+
+```mermaid
+flowchart LR
+    Web["Barena Platform"] --> Explore["Explore<br/>Scenario runtime"]
+    Explore --> HTTP["External HTTP Agent"]
+    HTTP -- "W3C Trace Context + OTLP" --> Trace["Conversation + Trace + Judge facts"]
+    Explore --> Trace
+    CLI["Barena CLI"] --> Adapter["AgentRuntimeAdapter"]
+    Adapter --> Private["Local / private Agent Runtime"]
+    Private -- "OTLP + Run events" --> Trace
+    Trace --> Adopt["Adopt completed Run"]
+    Adopt --> Issue["Issue"]
+    Issue --> Case["Immutable Case"]
+    Case --> Replay["Deterministic Replay"]
+    Replay --> Gate["Release Gate"]
+    Adopt --> Compare["Compatible evidence Compare"]
+    Trace --> Cloud["Embedded XiaoBaOS<br/>evaluator/evolution Runtime"]
+    Cloud --> Roles["UserCat · InspectorCat<br/>ReviewerCat · EvolutionCat"]
+    Roles --> Issue
+    Roles --> Gate
+```
+
+The TypeScript Engine remains the only implementation of deterministic Replay,
+artifact verification, scorecard computation, and Release Check. It also owns
+local/private Explore. The Scenario runtime is canonical only for Platform HTTP
+Explore; its Judge result is source evidence, not a release verdict. Platform
+Compare is a read-only comparison of compatible terminal facts. The loopback
+Worker remains a compatibility and development path. The Server must never
+parse human CLI output as a control protocol.
+
+The current per-Run OTLP receiver remains a scoped compatibility bridge because
+Inspector requires a bounded in-process evidence snapshot. Durable observation
+uses `fightheyyy/barena-platform`, selected after a real OTLP/JSON Explore trace
+passed ingestion, search, metadata/event, and waterfall acceptance.
+
+The current embedded React/Chakra client is migration scaffolding. The target
+Web is the downstream fork with a Barena Release Workbench. Barena retains its
+own Engine, Run/Event contracts, verifier, scorecards, and release decisions;
+the fork supplies the platform shell and Trace infrastructure.
+
+### 3.3 Identity and endpoint connection
+
+The v0.3 Platform reuses the fork's identity, projects, membership, and API-key
+boundary without changing evaluation truth or Trace privacy:
+
+- the browser and Runner authenticate at the Platform fork;
+- the fork forwards signed project context to internal Go Run Control;
+- Go does not run a second GitHub OAuth or expose a second public credential
+  surface in the target architecture;
+- Go stores neither fork OAuth credentials nor public project API keys;
+- Edge Runs use ordered Event append and explicit completion; no cloud worker
+  is started;
+- raw Trace, prompt, event, artifact, and workspace evidence remains private;
+- Community profiles remain experimental and are not a primary v0.3 journey.
+
+The fork's identity/project configuration and ClickHouse Trace data remain
+separate from Barena's evaluation-domain PostgreSQL schema. They may share
+physical infrastructure, but services communicate only through versioned APIs:
+there are no cross-service table reads, joins, or foreign keys.
+
+The Platform may initiate subject execution only for a registered reachable
+HTTP Agent. Local/private subject Runtime execution is endpoint-push. The
+embedded XiaoBaOS evaluator/evolution Runtime is platform-owned and has no
+route to impersonate or replace a subject Runtime. A general-purpose managed
+target Runtime, private laptop tunnel, and Go Runner remain explicitly
+deferred until cloud-triggered private execution becomes a validated
+requirement.
+
+```mermaid
+flowchart LR
+    Identity["Platform identity"] --> Project["Project + API key"]
+    Project --> HTTP["Registered HTTP Agent"]
+    Project --> Runner["Optional local Barena Runner"]
+    HTTP --> Scenario["Platform Scenario Explore"]
+    Scenario --> Gateway["Authenticated Platform gateway"]
+    Runner --> Gateway
+    Gateway --> Trace["Private Trace evidence"]
+    Gateway --> Release["Private Run + release records"]
+    Trace --> Web["Explore · Traces · History"]
+    Release --> Web
+```
 
 ## 4. Supported Runtime contracts
 
@@ -243,6 +366,16 @@ The aggregate evaluates:
 
 Missing binary, missing ordinary CLI contract, missing Role, missing credentials, timeout, output overflow, Skill staging failure, incomplete evidence, or unsupported comparison produces `held`/`blocked`, never simulated success.
 
+Release Check selects one immutable policy:
+
+- `non_regression` consumes one candidate Replay RunSet against fixed Case
+  expectations;
+- `improvement` consumes compatible baseline/candidate RunSets and the facts
+  produced by Compare.
+
+Only Release Check emits `cleared | held | rejected`. Compare is required only
+for `improvement`.
+
 ## 9. SkillsBench calibration
 
 `skillsbench:starter` is a pinned, manually adapted calibration derived from one SkillsBench `dialogue-parser` task. The repository and commit, upstream task hash, adaptation notes, fixture subset, and trusted structured verifier are retained.
@@ -343,5 +476,10 @@ admission, evidence requirements, or typed Scenario contracts.
 - `barena replay` executes a fixed Case through the verifier-backed replay
   engine, and `barena compare` executes baseline/candidate Skill arms through
   the existing paired release gate.
+- Server-driven execution uses Server-assigned Run IDs and the versioned Engine
+  Protocol; events are durable, idempotent, and never parsed from human output.
+- Run packages expose only hash-verified run-relative evidence references.
+- External cancellation reaches the active Runtime boundary and partial
+  evidence cannot be reported as passing.
 - README describes implemented versus planned capability without overclaiming.
 - Build, full tests, package dry-run, and installed CLI smoke pass.

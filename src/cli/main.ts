@@ -14,7 +14,7 @@ import { scanSubjectDirectory } from "../subjects/scanner";
 import {
   createAdHocExploreScenario,
   loadExploreScenario,
-  runExploreScenario,
+  runConnectedExploreScenario,
 } from "../explore";
 import { OpenClawTargetAdapter } from "../targets/openclaw-target-adapter";
 import { PortableTargetAdapter } from "../targets/portable-target-adapter";
@@ -248,7 +248,7 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
               profile
             ).env_allowlist,
           });
-      const result = await runExploreScenario(scenario, {
+      const result = await runConnectedExploreScenario(scenario, {
         runs_root: resolvedRoot(parsed.flags, project, "runs"),
         xiaoba: createXiaobaRuntimeConfig(parsed.flags, project, profile),
       });

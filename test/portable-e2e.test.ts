@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { loadAgentE2ECase, runAgentE2ECase } from "../src/e2e/case-runner";
-import type { AgentE2ECaseV1 } from "../src/e2e/types";
+import type { AgentE2ECaseV1, AgentE2EProgressEvent } from "../src/e2e/types";
 import { PortableTargetAdapter } from "../src/targets/portable-target-adapter";
 
 const portableDriver = path.resolve("examples/portable-driver.mjs");
@@ -18,11 +18,23 @@ test("portable Hermes-compatible driver clears with prompt, session, verifier, a
   const probe = await adapter.probe();
   assert.equal(probe.status, "ready");
   assert.equal(probe.component, "portable-target");
+  const progress: AgentE2EProgressEvent[] = [];
 
   const scorecard = await runAgentE2ECase(loaded.caseDefinition, loaded.caseBaseDir, {
     runsRoot: path.join(root, "runs"),
+    run_id: "server-replay-001",
     targetAdapter: adapter,
+    on_progress: (event) => {
+      progress.push(event);
+    },
   });
+  assert.equal(scorecard.run_id, "server-replay-001");
+  assert.equal(progress.at(-1)?.phase, "complete");
+  assert.equal(progress.at(-1)?.decision, "cleared");
+  assert.deepEqual(
+    progress.map((event) => event.sequence),
+    progress.map((_, index) => index + 1)
+  );
   assert.equal(scorecard.decision, "cleared");
   assert.equal(scorecard.status, "pass");
   assert.equal(scorecard.evaluation_mode, "portable_verifier");

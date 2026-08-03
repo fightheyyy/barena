@@ -1,9 +1,9 @@
 # Barena Positioning Contract
 
 Status: **Locked**
-Version: **1.4**
+Version: **1.5**
 Locked on: **2026-07-14**
-Tactical amendments: **2026-07-14 — XiaobaOS-first evidence; 2026-07-19 — portable verifier profile; 2026-07-22 — evaluator/target separation: Barena must not invoke XiaobaOS Arena; 2026-07-27 — Replay/Explore/Compare, AgentRuntimeAdapter, and OTel/OTLP architecture**
+Tactical amendments: **2026-07-14 — XiaobaOS-first evidence; 2026-07-19 — portable verifier profile; 2026-07-22 — evaluator/target separation: Barena must not invoke XiaobaOS Arena; 2026-07-27 — Replay/Explore/Compare, AgentRuntimeAdapter, and OTel/OTLP architecture; 2026-07-30 — local Platform delivery and policy-driven Release Check**
 Review on or after: **2026-10-14**
 
 This is the authoritative product-positioning document for Barena. README, SPEC, PLAN, roadmap, GitHub copy, and implementation priorities must remain consistent with it. If another document conflicts with this file, this file wins.
@@ -54,10 +54,10 @@ Barena evaluates a release candidate, not an abstract model score:
 ```text
 Barena(
   target runtime,
-  baseline configuration,
   candidate configuration,
   E2E case pack,
-  replay policy
+  replay policy,
+  optional baseline configuration
 )
   -> effectiveness
   -> stability
@@ -68,8 +68,8 @@ Barena(
 
 Required output:
 
-- Baseline and candidate task-success rates.
-- Candidate lift or regression relative to baseline.
+- Candidate task-success and fixed-Case non-regression evidence.
+- Baseline/candidate lift when the release claim is improvement.
 - Replay stability and flaky behavior.
 - Artifact and final-state verifier results.
 - Barena-owned boundary traces and evidence provenance.
@@ -82,7 +82,9 @@ The technical architecture is fixed in [`ARCHITECTURE.md`](./ARCHITECTURE.md):
 
 - `barena replay` protects known capabilities with fixed Cases.
 - `barena explore` uses a simulated-user, Inspector, and Reviewer loop to discover unknown behavior boundaries.
-- `barena compare` compares compatible baseline and candidate RunSets and feeds the release gate; it is not a third evaluator.
+- `barena compare` provides relative evidence for an improvement claim; it is not a third evaluator and is not required for a fixed-Case non-regression gate.
+- Release Check applies `non_regression` to one candidate Replay RunSet or `improvement` to compatible baseline/candidate RunSets.
+- Barena Web and the Go Server are a local delivery/control layer over the same TypeScript Engine, not a second evaluation implementation.
 - Every tested Agent Runtime is reached through `AgentRuntimeAdapter`.
 - OpenTelemetry is the canonical behavioral trace schema, OTLP is the canonical export/ingest protocol, and W3C Trace Context carries correlation.
 - Barena-owned boundary spans are mandatory. Runtime-native spans are optional, accepted only when genuinely exported, and never inferred from prose.
@@ -152,14 +154,14 @@ Missing native evaluator support, portable driver support, target binaries, cred
 
 ## Release Semantics
 
-| Effectiveness | Stability / safety | Decision |
+| Gate policy | Evidence | Decision |
 |---|---|---|
-| Measurable improvement | Stable, no regression | `cleared` |
-| Improvement | Flaky or evidence incomplete | `held` |
-| No demonstrated benefit | Stable but unjustified change | `held` |
-| Capability regression | Any | `rejected` |
-| Unsafe behavior | Any | `rejected` |
-| Runtime/evidence unavailable | Not executable | `held` with `blocked` status |
+| `non_regression` | Required fixed Cases pass, stable, complete evidence, safe | `cleared` |
+| `non_regression` | Capability regression or verified unsafe behavior | `rejected` |
+| `improvement` | Measurable lift, stable, no regression, complete evidence | `cleared` |
+| `improvement` | No demonstrated benefit, flaky, or evidence incomplete | `held` |
+| Either | Runtime/evidence unavailable | `held` with `blocked` status |
+| Either | Static admission rejected | `rejected` |
 
 ## What Barena Is Not
 
@@ -176,6 +178,10 @@ Barena is not:
 - a hosted dashboard in Phase 1.
 
 Public audits and benchmark reports are distribution and validation mechanisms. They are not the product itself. GUI or browser runtimes may become future target adapters only after the release-CI loop is proven.
+
+The v0.2 local Web Platform is not a hosted dashboard or generic
+observability product. It is the persistent local control/evidence surface for
+the same Explore, Replay, Release Check, and Runtime Adapter contracts.
 
 ## Success Metrics
 
@@ -205,8 +211,10 @@ Near-term sequence:
 4. Calibrate the shipped bounded XiaoBaOS Explore campaign and reviewable Replay Case candidates on real Roles.
 5. Add Barena-owned evaluator/boundary OTel spans; continue ingesting genuine Runtime-native OTLP without fabricating unsupported parentage.
 6. Add Claude Code, Codex, OpenClaw, and portable/Hermes Explore behind the same Runtime registry and evaluator-owned workflow.
-7. Ship the new `barena replay` and `barena compare` surfaces and put their release decision into GitHub CI.
-8. Expand to Role, prompt, model, tool, memory, and runtime comparisons once truthful baseline/candidate target configurations exist.
+7. Freeze the Engine Protocol and add the local Go Server/Web surface without
+   duplicating evaluation logic.
+8. Put non-regression and improvement Release Checks into GitHub CI.
+9. Expand to Role, prompt, model, tool, memory, and runtime comparisons once truthful baseline/candidate target configurations exist.
 
 Feature filter:
 

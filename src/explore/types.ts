@@ -1,5 +1,6 @@
 import type {
   AgentRuntimeAdapter,
+  OtlpForwardOptions,
   RuntimeProbeResult,
   RuntimeTurnResult,
   XiaobaOSRuntimeAdapterConfig,
@@ -215,6 +216,17 @@ export interface ExploreResultV1 {
     native_otlp_envelopes: number;
     native_otlp_spans: number;
     native_otlp_required: true;
+    root_trace_id: string;
+    native_trace_ids: string[];
+    primary_native_trace_id?: string;
+    otlp_forwarding?: {
+      endpoint: string;
+      status: "idle" | "pending" | "complete" | "failed";
+      attempted_envelopes: number;
+      forwarded_envelopes: number;
+      failed_envelopes: number;
+      last_error?: string;
+    };
     workspace_changes: ExploreWorkspaceChange[];
     unsafe_workspace_entries: string[];
     native_trace_refs: string[];
@@ -235,8 +247,12 @@ export interface ExploreResultV1 {
 
 export interface ExploreRunOptions {
   runs_root?: string;
+  run_id?: string;
+  signal?: AbortSignal;
   now?: () => Date;
   runtime_adapter?: AgentRuntimeAdapter;
+  root_trace_id?: string;
+  otlp_forward?: OtlpForwardOptions;
   xiaoba?: XiaobaOSRuntimeAdapterConfig;
   on_progress?: (
     event: ExploreProgressEvent

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { runAgentE2ECase } from "../src/e2e/case-runner";
 import type { AgentE2ECaseV1 } from "../src/e2e/types";
 import { runSkillEvaluation } from "../src/evaluation/run-skill-evaluation";
 import { XiaobaTargetAdapter } from "../src/targets/xiaoba-target-adapter";
@@ -74,6 +75,62 @@ test("XiaobaOS target adapter rejects Arena in injected base arguments", () => {
     () => new XiaobaTargetAdapter({ command: process.execPath, baseArgs: [fakeXiaoba, "arena"] }),
     /may not invoke XiaobaOS Arena/
   );
+});
+
+test("cloud-configured XiaobaOS adapter rejects Case requests outside the Runner environment allowlist", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "barena-xiaoba-env-boundary-"));
+  const projectRoot = path.join(root, "xiaoba-project");
+  const rolesRoot = path.join(projectRoot, "roles");
+  const roleRoot = path.join(rolesRoot, "secretary-cat");
+  fs.mkdirSync(roleRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(roleRoot, "role.json"),
+    JSON.stringify({ name: "secretary-cat", status: "active" }),
+    "utf8"
+  );
+  try {
+    const scorecard = await runAgentE2ECase(
+      {
+        schema: "barena.agent_e2e_case.v1",
+        case_id: "deny-untrusted-env",
+        target: {
+          adapter: "xiaoba",
+          runtime: "xiaobaos",
+          agent: "secretary-cat",
+          env_allowlist: ["DATABASE_URL"],
+        },
+        task: { prompt: "Create result.txt." },
+        assertions: { artifacts: [{ path: "result.txt", exists: true }] },
+        replays: 0,
+        timeout_ms: 5_000,
+        isolation: {
+          level: "policy_only",
+          network: "disabled",
+          writable_roots: ["workspace"],
+        },
+      },
+      root,
+      {
+        runsRoot: path.join(root, "runs"),
+        targetAdapter: new XiaobaTargetAdapter({
+          command: process.execPath,
+          baseArgs: [fakeXiaoba],
+          projectRoot,
+          rolesRoot,
+          envAllowlist: ["XIAOBA_LLM_API_KEY"],
+        }),
+      }
+    );
+    assert.equal(scorecard.decision, "held");
+    assert.equal(scorecard.reason_code, "config_invalid");
+    const boundaryRef = scorecard.attempts[0]?.target.boundary_trace_refs?.[0];
+    assert.ok(boundaryRef);
+    const span = readNdjson<{ trace_id: string; status: string }>(boundaryRef)[0];
+    assert.match(span?.trace_id ?? "", /^[a-f0-9]{32}$/);
+    assert.equal(span?.status, "ERROR");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("XiaobaOS target adapter blocks a missing configured Role before ordinary chat", async () => {
