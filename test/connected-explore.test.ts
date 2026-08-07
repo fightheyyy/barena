@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -7,8 +8,10 @@ import test from "node:test";
 import {
   createAdHocExploreScenario,
   runConnectedExploreScenario,
+  type ConnectedExploreSyncRecordV1,
 } from "../src/explore";
 import type { EngineEventV1 } from "../src/engine-protocol";
+import type { PlatformRunBundleV1 } from "../src/platform-client";
 import { OtlpTraceReceiver } from "../src/runtime-adapters";
 
 const FIXTURES = path.resolve(__dirname, "fixtures");
@@ -90,6 +93,7 @@ test("OTLP receiver retains locally, forwards only redacted bytes, and records f
 
 test("connected Explore closes Run, Trace, terminal facts, and evolution correlation", { concurrency: false }, async (t) => {
   const root = temporaryRoot(t);
+  const runsRoot = path.join(root, "runs");
   const forwardedSecret = "CONNECTED_ONLY_SECRET_VALUE";
   const previousSecret = process.env.FAKE_XIAOBA_SECRET;
   const previousEcho = process.env.FAKE_XIAOBA_ECHO_VALUE;
@@ -98,40 +102,56 @@ test("connected Explore closes Run, Trace, terminal facts, and evolution correla
   t.after(() => restoreEnv("FAKE_XIAOBA_SECRET", previousSecret));
   t.after(() => restoreEnv("FAKE_XIAOBA_ECHO_VALUE", previousEcho));
   const requests: CapturedRequest[] = [];
+  let firstCloudRequestSealed: boolean | undefined;
+  let locallySealed = false;
   const server = http.createServer(async (request, response) => {
     const body = await readBody(request);
+    if (firstCloudRequestSealed === undefined) {
+      firstCloudRequestSealed =
+        fs.existsSync(runsRoot) &&
+        fs.readdirSync(runsRoot).some((runId) =>
+          [
+            path.join(runsRoot, runId, "explore-result.json"),
+            path.join(runsRoot, runId, "telemetry", "otlp", "manifest.json"),
+          ].every((filePath) => fs.existsSync(filePath)),
+        );
+    }
     requests.push({
       path: request.url ?? "",
       authorization: request.headers.authorization ?? "",
       contentType: request.headers["content-type"] ?? "",
+      idempotencyKey: request.headers["idempotency-key"] ?? "",
       body,
     });
-    if (request.method === "POST" && request.url === "/api/barena/v1/ingest/runs") {
+    if (
+      request.method === "POST" &&
+      request.url === "/v1/ingest/run-bundles"
+    ) {
+      const bundle = JSON.parse(body.toString("utf8")) as PlatformRunBundleV1;
+      locallySealed = [
+        path.join(runsRoot, bundle.run.run_id, "explore-result.json"),
+        path.join(runsRoot, bundle.run.run_id, "reports", "report.json"),
+        path.join(
+          runsRoot,
+          bundle.run.run_id,
+          "telemetry",
+          "otlp",
+          "manifest.json",
+        ),
+      ].every((filePath) => fs.existsSync(filePath));
       respondJson(response, 201, {
-        run_id: "run-connected-e2e",
-        request_id: "request-connected-e2e",
-        origin: "edge",
-        operation: "explore",
-        state: "running",
+        schema: "barena.run_bundle_receipt.v1",
+        run_bundle_id: "bundle-connected-e2e",
+        run: { run_id: bundle.run.run_id },
+        events: bundle.events,
+        trace_ids: [bundle.events.at(-1)?.trace_id],
       });
       return;
     }
-    if (request.method === "POST" && request.url?.endsWith("/events")) {
-      response.statusCode = 204;
-      response.end();
-      return;
-    }
-    if (request.method === "POST" && request.url?.endsWith("/finish")) {
-      respondJson(response, 200, {
-        run_id: "run-connected-e2e",
-        request_id: "request-connected-e2e",
-        origin: "edge",
-        operation: "explore",
-        state: "completed",
-      });
-      return;
-    }
-    if (request.method === "POST" && request.url === "/api/otel/v1/traces") {
+    if (
+      request.method === "POST" &&
+      request.url === "/v1/otlp/v1/traces"
+    ) {
       respondJson(response, 200, { partialSuccess: {} });
       return;
     }
@@ -143,7 +163,7 @@ test("connected Explore closes Run, Trace, terminal facts, and evolution correla
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   const platformURL = `http://127.0.0.1:${address.port}`;
-  const apiKey = "sk-lw-connected-e2e-key";
+  const apiKey = "barena_pat_connected-e2e-key";
 
   const result = await runConnectedExploreScenario(
     createAdHocExploreScenario({
@@ -154,7 +174,7 @@ test("connected Explore closes Run, Trace, terminal facts, and evolution correla
     }),
     {
       platform: { url: platformURL, apiKey },
-      runs_root: path.join(root, "runs"),
+      runs_root: runsRoot,
       xiaoba: {
         command: FAKE_XIAOBA,
         project_root: XIAOBA_PROJECT,
@@ -176,24 +196,20 @@ test("connected Explore closes Run, Trace, terminal facts, and evolution correla
     })
   );
   assert.doesNotMatch(JSON.stringify(result), new RegExp(forwardedSecret));
-  assert.equal(result.evidence.otlp_forwarding?.status, "complete");
-  assert.equal(result.evidence.otlp_forwarding?.forwarded_envelopes, 7);
-  const createRequest = requests.find((item) =>
-    item.path.endsWith("/v1/ingest/runs")
+  assert.equal(result.evidence.otlp_forwarding, undefined);
+  const bundleRequest = requests.find((item) =>
+    item.path.endsWith("/v1/ingest/run-bundles")
   );
-  assert.ok(createRequest);
-  const createPayload = JSON.parse(createRequest.body.toString("utf8")) as {
-    input: { primary_trace_id: string; trace_ids: string[] };
-  };
-  const rootTraceId = createPayload.input.primary_trace_id;
+  assert.ok(bundleRequest);
+  const bundle = JSON.parse(
+    bundleRequest.body.toString("utf8"),
+  ) as PlatformRunBundleV1;
+  const rootTraceId = bundle.run.input.primary_trace_id as string;
   assert.match(rootTraceId, /^[a-f0-9]{32}$/);
-  assert.deepEqual(createPayload.input.trace_ids, [rootTraceId]);
+  assert.deepEqual(bundle.run.input.trace_ids, [rootTraceId]);
   assert.equal(result.evidence.root_trace_id, rootTraceId);
 
-  const eventRequests = requests.filter((item) => item.path.endsWith("/events"));
-  const events = eventRequests.map(
-    (item) => JSON.parse(item.body.toString("utf8")) as EngineEventV1
-  );
+  const events = bundle.events as EngineEventV1[];
   assert.ok(events.length > 8);
   assert.deepEqual(
     events.map((event) => event.sequence),
@@ -211,9 +227,24 @@ test("connected Explore closes Run, Trace, terminal facts, and evolution correla
   assert.ok("replay_case_candidates" in terminal.payload);
   assert.ok(Buffer.byteLength(JSON.stringify(terminal.payload)) < 12 * 1024);
   assert.doesNotMatch(JSON.stringify(terminal.payload), /\/Users\/|\/private\/var\//);
+  assert.equal(
+    bundle.terminal_fact_sha256,
+    crypto
+      .createHash("sha256")
+      .update(JSON.stringify(terminal.payload))
+      .digest("hex"),
+  );
+  assert.equal(bundle.run.run_id, result.run_id);
+  assert.equal(bundle.run.state, "completed");
+  assert.equal(firstCloudRequestSealed, true);
+  assert.equal(locallySealed, true);
+  assert.equal(
+    bundleRequest.idempotencyKey,
+    `barena:${result.run_id}:explore`,
+  );
 
   const otlpRequests = requests.filter(
-    (item) => item.path === "/api/otel/v1/traces"
+    (item) => item.path === "/v1/otlp/v1/traces"
   );
   assert.equal(otlpRequests.length, 8);
   assert.equal(
@@ -234,15 +265,86 @@ test("connected Explore closes Run, Trace, terminal facts, and evolution correla
   assert.ok(requests.every((item) => item.authorization === `Bearer ${apiKey}`));
   assert.ok(requests.every((item) => !item.body.includes(apiKey)));
   assert.ok(requests.every((item) => !item.body.includes(forwardedSecret)));
-  const finish = requests.at(-1)!;
-  assert.ok(finish.path.endsWith("/finish"));
-  assert.equal(JSON.parse(finish.body.toString("utf8")).state, "completed");
+  assert.equal(requests.at(-1)?.path, "/v1/ingest/run-bundles");
+  const sync = JSON.parse(
+    fs.readFileSync(path.join(result.paths.run_root, "catena", "sync.json"), "utf8"),
+  ) as ConnectedExploreSyncRecordV1;
+  assert.equal(sync.status, "synced");
+  assert.equal(sync.native_otlp.status, "synced");
+  assert.equal(sync.native_otlp.synced_envelopes, 7);
+  assert.equal(sync.summary_otlp.status, "synced");
+  assert.equal(sync.run_bundle.status, "synced");
+  assert.equal(sync.run_bundle.transport, "run_bundle");
+  assert.equal(sync.run_bundle.remote_run_id, result.run_id);
+});
+
+test("Catena failure is recorded without changing the sealed local Explore conclusion", { concurrency: false }, async (t) => {
+  const root = temporaryRoot(t);
+  const previousEcho = process.env.FAKE_XIAOBA_ECHO_VALUE;
+  process.env.FAKE_XIAOBA_ECHO_VALUE = "1";
+  t.after(() => restoreEnv("FAKE_XIAOBA_ECHO_VALUE", previousEcho));
+  const server = http.createServer(async (request, response) => {
+    await readBody(request);
+    if (request.url === "/v1/otlp/v1/traces") {
+      respondJson(response, 200, { partialSuccess: {} });
+      return;
+    }
+    if (request.url === "/v1/ingest/run-bundles") {
+      respondJson(response, 503, { detail: "Catena unavailable" });
+      return;
+    }
+    response.statusCode = 404;
+    response.end();
+  });
+  await listen(server);
+  t.after(() => server.close());
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  const result = await runConnectedExploreScenario(
+    createAdHocExploreScenario({
+      role: "secretary-cat",
+      task: "形成一个今天可执行的优先级计划。",
+      max_turns: 4,
+      timeout_ms: 10_000,
+    }),
+    {
+      platform: {
+        url: `http://127.0.0.1:${address.port}`,
+        apiKey: "barena_pat_cloud-failure-key",
+      },
+      runs_root: path.join(root, "runs"),
+      xiaoba: {
+        command: FAKE_XIAOBA,
+        project_root: XIAOBA_PROJECT,
+        roles_root: ROLES_ROOT,
+        skills_root: SKILLS_ROOT,
+        env_allowlist: ["FAKE_XIAOBA_ECHO_VALUE"],
+      },
+    },
+  );
+
+  assert.equal(result.status, "pass");
+  const sealed = JSON.parse(
+    fs.readFileSync(result.paths.report_json, "utf8"),
+  ) as { status: string; summary: string };
+  assert.equal(sealed.status, "pass");
+  assert.equal(sealed.summary, result.summary);
+  const sync = JSON.parse(
+    fs.readFileSync(path.join(result.paths.run_root, "catena", "sync.json"), "utf8"),
+  ) as ConnectedExploreSyncRecordV1;
+  assert.equal(sync.status, "failed");
+  assert.equal(sync.native_otlp.status, "synced");
+  assert.equal(sync.summary_otlp.status, "synced");
+  assert.equal(sync.run_bundle.status, "failed");
+  assert.match(sync.errors.join("\n"), /Run Bundle.*503.*Catena unavailable/);
 });
 
 interface CapturedRequest {
   path: string;
   authorization: string;
   contentType: string;
+  idempotencyKey: string;
   body: Buffer;
 }
 

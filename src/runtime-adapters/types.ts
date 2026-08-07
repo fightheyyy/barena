@@ -140,6 +140,7 @@ export interface CliRuntimeAdapterConfig {
   roles_root?: string;
   skills_root?: string;
   env_allowlist?: string[];
+  env_overrides?: Record<string, string>;
   probe_timeout_ms?: number;
   max_output_bytes?: number;
   kill_grace_ms?: number;

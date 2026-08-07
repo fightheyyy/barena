@@ -109,69 +109,47 @@ flowchart LR
 
 Normative details, telemetry attributes, and invariants are in `docs/ARCHITECTURE.md`.
 
-### 3.2 Platform execution boundary
+### 3.2 Catena integration boundary
 
-The delivered v0.2 loopback path adds Barena Web and a Go `barena-server` over
-the existing TypeScript evaluation Engine. The current Server can manage a
-local Node worker through:
+Barena has one canonical subject-execution plane: the CLI/CI Engine runs beside
+the user's target Runtime through `AgentRuntimeAdapter`. It owns Explore,
+Replay, Compare, current-Run evidence analysis, deterministic verification, and
+the terminal release decision. It works without Catena.
 
-- `barena.engine_request.v1`;
-- `barena.engine_event.v1`;
-- `barena.run_package.v1`.
+When a Catena API key is configured, the same local execution additionally:
 
-The target has two subject-execution planes, one evidence plane, and one
-platform-owned evaluator/evolution plane:
+- forwards correlated Runtime and Barena boundary OTLP;
+- synchronizes ordered Events and one immutable `barena.run_package.v1`;
+- records synchronization as `pending`, `synced`, or `failed` without changing
+  the local evaluation result;
+- may later pull a Catena-generated draft candidate or Case for local Replay.
 
-- **Platform HTTP Explore** reuses the fork's existing Scenario runtime. It
-  invokes a registered external HTTP Agent, runs its User Simulator and
-  trace-aware Judge, and retains conversation plus OTLP evidence. The target
-  Agent Runtime is not hosted inside Barena.
-- **Endpoint execution** runs the TypeScript Engine beside XiaoBaOS or another
-  local/private Runtime through `AgentRuntimeAdapter`.
-- **Cloud evaluator/evolution execution** embeds one dedicated XiaoBaOS
-  Runtime in Barena Platform. It may execute only `UserCat`, `InspectorCat`,
-  `ReviewerCat`, and `EvolutionCat`; it never serves as the user's target
-  Agent. It turns completed evidence into findings, Cases, semantic review,
-  and Role/Skill/Memory candidates while Go retains workflow authority.
-- **Evolution records** adopt completed evidence into Go, curate Issue ->
-  immutable Case, run deterministic Replay in the TypeScript Engine, and
-  persist the resulting Evaluation/Release records.
-
-The Apache-2.0 Barena Platform fork supplies the LangWatch-derived frontend,
-authentication/project boundary, registered HTTP Agents, Scenario execution,
-OTLP ingestion, and Trace views. Go owns Run lifecycle, Issues, Cases, Harness
-Version lineage, immutable Run Packages, and decision records. A completed
-Scenario run is adopted, never re-executed or re-judged. Go validates records
-without deriving a second verdict.
+Catena owns durable Trace/Run history and embeds one dedicated XiaoBaOS
+Evolution Runtime. That Runtime consumes an Evidence Pack through InspectorCat,
+EvolutionCat, and ReviewerCat and emits draft Memory/Role/Skill/Harness/Case
+candidates. It never invokes the target Agent and never creates or changes a
+release verdict. The historical Platform HTTP Explore and cloud Replay paths
+remain migration/demo compatibility only and are not the target architecture.
 
 ```mermaid
 flowchart LR
-    Web["Barena Platform"] --> Explore["Explore<br/>Scenario runtime"]
-    Explore --> HTTP["External HTTP Agent"]
-    HTTP -- "W3C Trace Context + OTLP" --> Trace["Conversation + Trace + Judge facts"]
-    Explore --> Trace
-    CLI["Barena CLI"] --> Adapter["AgentRuntimeAdapter"]
-    Adapter --> Private["Local / private Agent Runtime"]
-    Private -- "OTLP + Run events" --> Trace
-    Trace --> Adopt["Adopt completed Run"]
-    Adopt --> Issue["Issue"]
-    Issue --> Case["Immutable Case"]
-    Case --> Replay["Deterministic Replay"]
-    Replay --> Gate["Release Gate"]
-    Adopt --> Compare["Compatible evidence Compare"]
-    Trace --> Cloud["Embedded XiaoBaOS<br/>evaluator/evolution Runtime"]
-    Cloud --> Roles["UserCat · InspectorCat<br/>ReviewerCat · EvolutionCat"]
-    Roles --> Issue
-    Roles --> Gate
+    CLI["Barena CLI / CI"] --> Adapter["AgentRuntimeAdapter"]
+    Adapter <--> Target["Local / private target Agent"]
+    Target --> Evidence["Current Run<br/>OTLP + Artifact"]
+    CLI --> Evidence
+    Evidence --> Verify["Explore · Replay · Compare · Verifier"]
+    Verify --> Package["Local result + immutable Run Package"]
+    Evidence -. "optional OTLP" .-> Catena["Catena Cloud<br/>durable Trace + Run history"]
+    Package -. "optional sync" .-> Catena
+    Catena --> Evolution["XiaoBaOS Evolution Runtime<br/>Inspector · Evolution · Reviewer"]
+    Evolution --> Candidate["draft/unverified candidate"]
+    Candidate -. "pull" .-> Verify
 ```
 
 The TypeScript Engine remains the only implementation of deterministic Replay,
-artifact verification, scorecard computation, and Release Check. It also owns
-local/private Explore. The Scenario runtime is canonical only for Platform HTTP
-Explore; its Judge result is source evidence, not a release verdict. Platform
-Compare is a read-only comparison of compatible terminal facts. The loopback
-Worker remains a compatibility and development path. The Server must never
-parse human CLI output as a control protocol.
+artifact verification, scorecard computation, and Release Check. Catena
+persists the package and displays the result without recomputing it. The Server
+must never parse human CLI output as a control protocol.
 
 The current per-Run OTLP receiver remains a scoped compatibility bridge because
 Inspector requires a bounded in-process evidence snapshot. Durable observation

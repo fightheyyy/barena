@@ -133,6 +133,9 @@ function optionalRuntimeConfig(value: unknown): XiaobaEvolutionRuntimeConfigV1 |
     ...(config.env_allowlist !== undefined && {
       env_allowlist: envAllowlist(config.env_allowlist),
     }),
+    ...(config.env_overrides !== undefined && {
+      env_overrides: boundedEnvironmentRecord(config.env_overrides),
+    }),
     ...(config.probe_timeout_ms !== undefined && {
       probe_timeout_ms: integerValue(
         config.probe_timeout_ms,
@@ -158,6 +161,26 @@ function optionalRuntimeConfig(value: unknown): XiaobaEvolutionRuntimeConfigV1 |
       ),
     }),
   };
+}
+
+function boundedEnvironmentRecord(value: unknown): Record<string, string> {
+  const record = objectValue(value, "runtime.env_overrides");
+  const entries = Object.entries(record);
+  if (entries.length > 8) {
+    throw new EvolutionRuntimeProtocolError(
+      "runtime.env_overrides exceeds 8 entries"
+    );
+  }
+  const result: Record<string, string> = {};
+  for (const [key, rawValue] of entries) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new EvolutionRuntimeProtocolError(
+        "runtime.env_overrides contains an invalid name"
+      );
+    }
+    result[key] = boundedString(rawValue, `runtime.env_overrides.${key}`, 16_384);
+  }
+  return result;
 }
 
 function optionalTelemetry(value: unknown): RuntimeTelemetryConfig | undefined {

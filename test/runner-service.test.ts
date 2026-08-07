@@ -61,6 +61,12 @@ test("Runner owns Evolution executable and clamps the hard turn deadline", () =>
       runtime: {
         command: "/tmp/untrusted",
         env_allowlist: ["DATABASE_URL"],
+        env_overrides: {
+          XIAOBA_LLM_PROVIDER: "openai",
+          XIAOBA_LLM_API_BASE: "https://owner.example.test/v1",
+          XIAOBA_LLM_API_KEY: "owner-secret",
+          XIAOBA_LLM_MODEL: "owner-model",
+        },
       },
     },
     120_000,
@@ -68,9 +74,41 @@ test("Runner owns Evolution executable and clamps the hard turn deadline", () =>
   ) as Record<string, unknown>;
 
   assert.equal(bound.timeout_ms, 120_000);
-  assert.deepEqual(bound.runtime, trustedRuntime);
+  assert.deepEqual(bound.runtime, {
+    ...trustedRuntime,
+    env_overrides: {
+      XIAOBA_LLM_PROVIDER: "openai",
+      XIAOBA_LLM_API_BASE: "https://owner.example.test/v1",
+      XIAOBA_LLM_API_KEY: "owner-secret",
+      XIAOBA_LLM_MODEL: "owner-model",
+    },
+  });
   assert.equal(JSON.stringify(bound).includes("/tmp/untrusted"), false);
   assert.equal(JSON.stringify(bound).includes("DATABASE_URL"), false);
+});
+
+test("Runner rejects arbitrary Evolution model environment overrides", () => {
+  assert.throws(
+    () => bindRunnerOwnedEvolutionRequest({
+      schema: "barena.xiaoba_evolution_request.v1",
+      request_id: "inspector-two",
+      operation: "turn",
+      run_id: "job-two",
+      role: "inspector-cat",
+      prompt: "Inspect retained evidence.",
+      workspace: "/var/lib/spiral/evolution/job-two/inspector-two",
+      timeout_ms: 30_000,
+      runtime: {
+        env_overrides: {
+          XIAOBA_LLM_PROVIDER: "openai",
+          XIAOBA_LLM_API_BASE: "https://owner.example.test/v1",
+          XIAOBA_LLM_API_KEY: "owner-secret",
+          DATABASE_URL: "postgres://forbidden",
+        },
+      },
+    }),
+    /not allowed/,
+  );
 });
 
 test("Scenario evaluator turns share the Runner hard deadline", () => {
@@ -97,5 +135,38 @@ test("Runner rejects an invalid Evolution deadline during startup", () => {
   assert.throws(
     () => createSpiralRunnerServer({ evolutionTurnTimeoutMs: 0 }),
     /evolutionTurnTimeoutMs must be an integer from 1000 to 900000/,
+  );
+});
+
+test("Evolution-only Runner does not expose target execution routes", async (t) => {
+  const server = createSpiralRunnerServer({ mode: "evolution" });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  t.after(() => {
+    server.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const origin = `http://127.0.0.1:${address.port}`;
+
+  for (const route of [
+    "/v1/engine/run",
+    "/v1/scenario/turn",
+    "/v1/engine/runs/demo/cancel",
+  ]) {
+    const response = await fetch(origin + route, { method: "POST" });
+    assert.equal(response.status, 404, route);
+  }
+});
+
+test("Runner rejects an unknown deployment mode", () => {
+  assert.throws(
+    () => createSpiralRunnerServer({ mode: "managed" as never }),
+    /CATENA_RUNNER_MODE must be all or evolution/,
   );
 });

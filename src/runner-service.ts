@@ -18,12 +18,19 @@ const EVOLUTION_PATH = "/v1/evolution/run";
 const SCENARIO_TURN_PATH = "/v1/scenario/turn";
 const DEFAULT_EVOLUTION_TURN_TIMEOUT_MS = 120_000;
 const SCENARIO_ROLES = new Set(["user-cat", "reviewer-cat"] as const);
+const OWNER_MODEL_ENV_NAMES = new Set([
+  "XIAOBA_LLM_PROVIDER",
+  "XIAOBA_LLM_API_BASE",
+  "XIAOBA_LLM_API_KEY",
+  "XIAOBA_LLM_MODEL",
+]);
 
 export interface SpiralRunnerServiceOptions {
   address?: string;
   runsRoot?: string;
   evolutionRoot?: string;
   evolutionTurnTimeoutMs?: number;
+  mode?: "all" | "evolution";
 }
 
 interface RunnerServiceConfig {
@@ -32,6 +39,7 @@ interface RunnerServiceConfig {
   runsRoot: string;
   evolutionRoot: string;
   evolutionTurnTimeoutMs: number;
+  mode: "all" | "evolution";
 }
 
 /**
@@ -51,6 +59,7 @@ export function createSpiralRunnerServer(
         writeJson(response, 200, {
           status: "ok",
           service: "spiral-runner",
+          mode: config.mode,
         });
         return;
       }
@@ -68,10 +77,13 @@ export function createSpiralRunnerServer(
         writeJson(response, runtimeReady ? 200 : 503, {
           status: runtimeReady ? "ready" : "blocked",
           service: "spiral-runner",
-          engine_protocol: "barena.engine_request.v1",
-          event_protocol: "barena.engine_event.v1",
+          mode: config.mode,
+          ...(config.mode === "all" && {
+            engine_protocol: "barena.engine_request.v1",
+            event_protocol: "barena.engine_event.v1",
+            scenario_protocol: "barena.xiaoba_scenario_request.v1",
+          }),
           evolution_protocol: "barena.xiaoba_evolution_request.v1",
-          scenario_protocol: "barena.xiaoba_scenario_request.v1",
           evolution_runtime:
             probe.status === "ok" && probe.operation === "probe"
               ? probe.runtime.status
@@ -79,7 +91,11 @@ export function createSpiralRunnerServer(
         });
         return;
       }
-      if (request.method === "POST" && request.url === ENGINE_PATH) {
+      if (
+        config.mode === "all" &&
+        request.method === "POST" &&
+        request.url === ENGINE_PATH
+      ) {
         await handleEngineRequest(request, response, config, engineRequests);
         return;
       }
@@ -87,14 +103,18 @@ export function createSpiralRunnerServer(
         await handleEvolutionRequest(request, response, config);
         return;
       }
-      if (request.method === "POST" && request.url === SCENARIO_TURN_PATH) {
+      if (
+        config.mode === "all" &&
+        request.method === "POST" &&
+        request.url === SCENARIO_TURN_PATH
+      ) {
         await handleScenarioTurnRequest(request, response, config);
         return;
       }
       const cancelMatch = request.url?.match(
         /^\/v1\/engine\/runs\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\/cancel$/,
       );
-      if (request.method === "POST" && cancelMatch) {
+      if (config.mode === "all" && request.method === "POST" && cancelMatch) {
         const runId = cancelMatch[1]!;
         const active = engineRequests.get(runId);
         active?.abort("spiral-core requested cancellation");
@@ -406,7 +426,16 @@ function serviceConfig(
       1_000,
       900_000,
     ),
+    mode: runnerMode(options.mode ?? process.env.CATENA_RUNNER_MODE),
   };
+}
+
+function runnerMode(value: string | undefined): "all" | "evolution" {
+  const mode = value?.trim() || "all";
+  if (mode !== "all" && mode !== "evolution") {
+    throw new Error("CATENA_RUNNER_MODE must be all or evolution");
+  }
+  return mode;
 }
 
 function evolutionRuntimeConfig(): Record<string, unknown> {
@@ -462,6 +491,12 @@ export function bindRunnerOwnedEvolutionRequest(
   trustedRuntime: Record<string, unknown> = evolutionRuntimeConfig(),
 ): unknown {
   const value = objectValue(input, "Evolution request");
+  const callerRuntime = value.runtime === undefined
+    ? {}
+    : objectValue(value.runtime, "Evolution request runtime");
+  const ownerModel = value.operation === "turn"
+    ? ownerModelEnvironment(callerRuntime.env_overrides)
+    : undefined;
   const timeoutCeiling = boundedInteger(
     maxTurnTimeoutMs,
     "maxTurnTimeoutMs",
@@ -476,8 +511,32 @@ export function bindRunnerOwnedEvolutionRequest(
         timeoutCeiling,
       ),
     }),
-    runtime: trustedRuntime,
+    runtime: {
+      ...trustedRuntime,
+      ...(ownerModel && { env_overrides: ownerModel }),
+    },
   };
+}
+
+function ownerModelEnvironment(value: unknown): Record<string, string> {
+  const record = objectValue(value, "runtime.env_overrides");
+  const entries = Object.entries(record);
+  if (entries.length !== OWNER_MODEL_ENV_NAMES.size) {
+    throw new Error("runtime.env_overrides must contain the complete owner model configuration");
+  }
+  const result: Record<string, string> = {};
+  for (const [name, rawValue] of entries) {
+    if (!OWNER_MODEL_ENV_NAMES.has(name)) {
+      throw new Error("runtime.env_overrides contains a variable that is not allowed");
+    }
+    result[name] = boundedText(rawValue, `runtime.env_overrides.${name}`, 16_384);
+  }
+  for (const name of OWNER_MODEL_ENV_NAMES) {
+    if (!result[name]) {
+      throw new Error("runtime.env_overrides is missing an owner model variable");
+    }
+  }
+  return result;
 }
 
 function platformTelemetryConfig(): PlatformTelemetryConfig | undefined {

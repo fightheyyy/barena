@@ -21,6 +21,7 @@ import {
   type RuntimeProbeResult,
   type RuntimeTurnInput,
   type RuntimeTurnResult,
+  XiaobaOSRuntimeAdapter,
 } from "../src/runtime-adapters";
 import { readNdjson } from "../src/utils/fs";
 
@@ -69,6 +70,83 @@ test("embedded Runtime executes an allowlisted role turn and always closes its X
     assert.equal(adapter.closed, 1);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("owner model overrides stay isolated per concurrent XiaoBaOS adapter and are redacted", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "barena-owner-model-isolation-"));
+  const projectRoot = path.join(root, "xiaoba-project");
+  const rolesRoot = path.join(projectRoot, "roles");
+  const roleRoot = path.join(rolesRoot, "inspector-cat");
+  const fixture = path.join(root, "fake-owner-model.mjs");
+  fs.mkdirSync(roleRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(roleRoot, "role.json"),
+    JSON.stringify({ name: "inspector-cat", status: "active" }),
+    "utf8"
+  );
+  fs.writeFileSync(
+    fixture,
+    `import fs from "node:fs";
+import path from "node:path";
+const value = {
+  provider: process.env.XIAOBA_LLM_PROVIDER,
+  base: process.env.XIAOBA_LLM_API_BASE,
+  model: process.env.XIAOBA_LLM_MODEL,
+  key: process.env.XIAOBA_LLM_API_KEY,
+};
+fs.writeFileSync(path.join(process.cwd(), "owner-model.json"), JSON.stringify(value), "utf8");
+process.stdout.write("assistant:" + value.model + ":" + value.key + "\\n");
+`,
+    "utf8"
+  );
+  const originalProcessSecret = process.env.XIAOBA_LLM_API_KEY;
+  const definitions = [
+    { suffix: "a", model: "model-a", secret: "owner-secret-a" },
+    { suffix: "b", model: "model-b", secret: "owner-secret-b" },
+  ];
+  try {
+    const executions = definitions.map(async (definition) => {
+      const workspace = path.join(root, `workspace-${definition.suffix}`);
+      const adapter = new XiaobaOSRuntimeAdapter({
+        command: process.execPath,
+        base_args: [fixture],
+        project_root: projectRoot,
+        roles_root: rolesRoot,
+        env_overrides: {
+          XIAOBA_LLM_PROVIDER: "openai",
+          XIAOBA_LLM_API_BASE: `https://${definition.suffix}.example.test/v1`,
+          XIAOBA_LLM_MODEL: definition.model,
+          XIAOBA_LLM_API_KEY: definition.secret,
+        },
+      });
+      const session = await adapter.openSession({
+        run_id: `run-${definition.suffix}`,
+        scenario_id: `scenario-${definition.suffix}`,
+        attempt_id: `attempt-${definition.suffix}`,
+        session_id: `session-${definition.suffix}`,
+        thread_id: `thread-${definition.suffix}`,
+        workspace,
+        target: { role: "inspector-cat" },
+      });
+      const result = await adapter.sendTurn(session, { message: "inspect", timeout_ms: 5_000 });
+      await adapter.close(session);
+      const observed = JSON.parse(
+        fs.readFileSync(path.join(workspace, "owner-model.json"), "utf8")
+      ) as { model: string; key: string };
+      return { definition, result, observed };
+    });
+    const results = await Promise.all(executions);
+    for (const { definition, result, observed } of results) {
+      assert.equal(result.status, "completed");
+      assert.equal(observed.model, definition.model);
+      assert.equal(observed.key, definition.secret);
+      assert.doesNotMatch(result.assistant?.content ?? "", new RegExp(definition.secret));
+      assert.doesNotMatch(result.process.stdout, new RegExp(definition.secret));
+    }
+    assert.equal(process.env.XIAOBA_LLM_API_KEY, originalProcessSecret);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 

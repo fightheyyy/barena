@@ -1,14 +1,20 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import {
   BarenaPlatformClient,
   platformConnectionFromEnv,
   type BarenaPlatformConnection,
+  type PlatformRunBundleV1,
+  type PlatformRunBundleSyncResult,
 } from "../platform-client";
 import {
   ENGINE_EVENT_SCHEMA_V1,
   type EngineEventV1,
 } from "../engine-protocol";
 import { buildExploreOtlpPayload } from "../telemetry/explore-otlp-export";
+import type { OtlpReceiverManifest } from "../runtime-adapters";
+import { readJson, writeJson } from "../utils/fs";
 import { runExploreScenario } from "./runner";
 import type {
   ExploreProgressEvent,
@@ -21,94 +27,73 @@ export interface ConnectedExploreOptions extends ExploreRunOptions {
   platform?: BarenaPlatformConnection | false;
 }
 
+export type ConnectedExploreSyncStatus = "pending" | "failed" | "synced";
+
+export interface ConnectedExploreSyncRecordV1 {
+  schema: "barena.catena_sync.v1";
+  run_id: string;
+  trace_id: string;
+  status: ConnectedExploreSyncStatus;
+  attempted_at: string;
+  completed_at?: string;
+  run_bundle_ref: string;
+  run_bundle_sha256: string;
+  native_otlp: {
+    status: ConnectedExploreSyncStatus;
+    attempted_envelopes: number;
+    synced_envelopes: number;
+    failed_envelopes: number;
+  };
+  summary_otlp: {
+    status: ConnectedExploreSyncStatus;
+  };
+  run_bundle: {
+    status: ConnectedExploreSyncStatus;
+    transport?: PlatformRunBundleSyncResult["transport"];
+    remote_run_id?: string;
+  };
+  errors: string[];
+}
+
 export async function runConnectedExploreScenario(
   scenario: ExploreScenarioV1,
   options: ConnectedExploreOptions = {}
 ): Promise<ExploreResultV1> {
-  const connection =
-    options.platform === false
-      ? undefined
-      : options.platform ?? platformConnectionFromEnv();
-  if (!connection) return runExploreScenario(scenario, options);
+  if (options.platform === false) return runExploreScenario(scenario, options);
+  let connection: BarenaPlatformConnection | undefined;
+  let connectionError: Error | undefined;
+  try {
+    connection = options.platform ?? platformConnectionFromEnv();
+  } catch (error) {
+    connectionError = asError(error);
+  }
+  if (!connection && !connectionError) {
+    return runExploreScenario(scenario, options);
+  }
 
-  const client = new BarenaPlatformClient(connection);
   const rootTraceId = connectedTraceId(options.root_trace_id);
-  const remoteRun = await client.createRun({
-    operation: "explore",
-    input: {
-      scenario,
-      primary_trace_id: rootTraceId,
-      trace_ids: [rootTraceId],
-      evidence: {
-        primary_trace_id: rootTraceId,
-        trace_ids: [rootTraceId],
-      },
-    },
-    runtime: {
-      runtime: scenario.target.runtime,
-      role: scenario.target.role,
-      ...(scenario.target.skill && { skill: scenario.target.skill }),
+  const progress: ExploreProgressEvent[] = [];
+  const { platform: _platform, ...localOptions } = options;
+  const result = await runExploreScenario(scenario, {
+    ...localOptions,
+    root_trace_id: rootTraceId,
+    // Catena synchronization starts only after runExploreScenario has stopped
+    // its receiver, redacted evidence, and persisted the terminal result.
+    otlp_forward: undefined,
+    on_progress: async (event) => {
+      progress.push(event);
+      await options.on_progress?.(event);
     },
   });
-  let uploadFailure: Error | undefined;
-  const progress: ExploreProgressEvent[] = [];
-  let lastSequence = 0;
-  try {
-    const result = await runExploreScenario(scenario, {
-      ...options,
-      run_id: remoteRun.run_id,
-      root_trace_id: rootTraceId,
-      otlp_forward: client.otlpForwardOptions(),
-      on_progress: async (event) => {
-        progress.push(event);
-        lastSequence = Math.max(lastSequence, event.sequence);
-        try {
-          await options.on_progress?.(event);
-        } catch {
-          // Preserve the core runner's optional observer behavior.
-        }
-        if (uploadFailure) return;
-        try {
-          await client.appendEvent(
-            remoteRun.run_id,
-            engineEventFromExploreProgress(remoteRun.run_id, event, rootTraceId)
-          );
-        } catch (error) {
-          uploadFailure = asError(error);
-        }
-      },
-    });
-    if (uploadFailure) {
-      throw uploadFailure;
-    }
-    assertOtlpForwardingComplete(result);
-    await client.exportOtlpJson(
-      buildExploreOtlpPayload({
-        runId: remoteRun.run_id,
-        traceId: rootTraceId,
-        result,
-        progress,
-      })
-    );
-    await client.appendEvent(
-      remoteRun.run_id,
-      engineEventFromExploreResult(
-        remoteRun.run_id,
-        lastSequence + 1,
-        rootTraceId,
-        result
-      )
-    );
-    await client.finishRun(remoteRun.run_id, "completed");
-    return result;
-  } catch (error) {
-    try {
-      await client.finishRun(remoteRun.run_id, "failed", safeError(error));
-    } catch {
-      // Preserve the original endpoint execution or evidence upload error.
-    }
-    throw error;
-  }
+
+  await syncRetainedExplore({
+    result,
+    progress,
+    traceId: rootTraceId,
+    connection,
+    connectionError,
+  });
+  return result;
 }
 
 export function engineEventFromExploreProgress(
@@ -168,23 +153,275 @@ export function engineEventFromExploreResult(
   };
 }
 
-function assertOtlpForwardingComplete(result: ExploreResultV1): void {
-  const forwarding = result.evidence.otlp_forwarding;
-  if (!forwarding) {
-    throw new Error("Connected Explore did not record Platform OTLP forwarding.");
-  }
-  if (
-    forwarding.status === "failed" ||
-    forwarding.failed_envelopes > 0 ||
-    forwarding.forwarded_envelopes !== forwarding.attempted_envelopes
-  ) {
-    throw new Error(
-      `Connected Explore retained local OTLP but Platform forwarding failed: ${
-        forwarding.last_error ??
-        `${forwarding.forwarded_envelopes}/${forwarding.attempted_envelopes} envelopes uploaded`
-      }`
+async function syncRetainedExplore(input: {
+  result: ExploreResultV1;
+  progress: ExploreProgressEvent[];
+  traceId: string;
+  connection?: BarenaPlatformConnection;
+  connectionError?: Error;
+}): Promise<void> {
+  const runRoot = path.resolve(input.result.paths.run_root);
+  const bundle = buildRunBundle(input.result, input.progress, input.traceId);
+  const bundleBytes = Buffer.from(JSON.stringify(bundle), "utf8");
+  const bundleRef = path.join(runRoot, "catena", "run-bundle.json");
+  const syncRef = path.join(runRoot, "catena", "sync.json");
+  writeJson(bundleRef, bundle);
+
+  const record: ConnectedExploreSyncRecordV1 = {
+    schema: "barena.catena_sync.v1",
+    run_id: input.result.run_id,
+    trace_id: input.traceId,
+    status: "pending",
+    attempted_at: new Date().toISOString(),
+    run_bundle_ref: bundleRef,
+    run_bundle_sha256: crypto
+      .createHash("sha256")
+      .update(bundleBytes)
+      .digest("hex"),
+    native_otlp: {
+      status: "pending",
+      attempted_envelopes: input.result.evidence.native_otlp_envelopes,
+      synced_envelopes: 0,
+      failed_envelopes: 0,
+    },
+    summary_otlp: { status: "pending" },
+    run_bundle: { status: "pending" },
+    errors: [],
+  };
+  writeJson(syncRef, record);
+
+  if (input.connectionError || !input.connection) {
+    failPendingSync(record);
+    addSyncError(
+      record,
+      "connection",
+      input.connectionError ?? new Error("Catena connection is unavailable"),
     );
+    finishSyncRecord(syncRef, record);
+    return;
   }
+
+  let client: BarenaPlatformClient;
+  try {
+    client = new BarenaPlatformClient(input.connection);
+  } catch (error) {
+    failPendingSync(record);
+    addSyncError(record, "connection", error);
+    finishSyncRecord(syncRef, record);
+    return;
+  }
+
+  try {
+    const envelopes = retainedOtlpEnvelopes(input.result);
+    record.native_otlp.attempted_envelopes = envelopes.length;
+    for (const envelope of envelopes) {
+      try {
+        const body = readVerifiedEnvelope(runRoot, envelope);
+        await client.exportOtlpEnvelope(body, envelope.content_type);
+        record.native_otlp.synced_envelopes += 1;
+      } catch (error) {
+        record.native_otlp.failed_envelopes += 1;
+        addSyncError(record, `native OTLP ${envelope.envelope_id}`, error);
+      }
+    }
+    record.native_otlp.status =
+      record.native_otlp.failed_envelopes > 0 ? "failed" : "synced";
+  } catch (error) {
+    record.native_otlp.status = "failed";
+    record.native_otlp.failed_envelopes =
+      record.native_otlp.attempted_envelopes;
+    addSyncError(record, "native OTLP manifest", error);
+  }
+
+  try {
+    await client.exportOtlpJson(
+      buildExploreOtlpPayload({
+        runId: input.result.run_id,
+        traceId: input.traceId,
+        result: input.result,
+        progress: input.progress,
+      }),
+    );
+    record.summary_otlp.status = "synced";
+  } catch (error) {
+    record.summary_otlp.status = "failed";
+    addSyncError(record, "Barena summary OTLP", error);
+  }
+
+  try {
+    const synced = await client.syncRunBundle(
+      bundle,
+      `barena:${input.result.run_id}:explore`,
+    );
+    record.run_bundle = {
+      status: "synced",
+      transport: synced.transport,
+      remote_run_id: synced.remote_run_id,
+    };
+  } catch (error) {
+    record.run_bundle.status = "failed";
+    addSyncError(record, "Run Bundle", error);
+  }
+
+  record.status =
+    record.native_otlp.status === "synced" &&
+    record.summary_otlp.status === "synced" &&
+    record.run_bundle.status === "synced"
+      ? "synced"
+      : "failed";
+  finishSyncRecord(syncRef, record);
+}
+
+function buildRunBundle(
+  result: ExploreResultV1,
+  progress: ExploreProgressEvent[],
+  traceId: string,
+): PlatformRunBundleV1 {
+  const events = progress.map((event) =>
+    engineEventFromExploreProgress(result.run_id, event, traceId),
+  );
+  const lastSequence = events.reduce(
+    (maximum, event) => Math.max(maximum, event.sequence),
+    0,
+  );
+  const terminal = engineEventFromExploreResult(
+    result.run_id,
+    lastSequence + 1,
+    traceId,
+    result,
+  );
+  events.push(terminal);
+  const traceIds = [
+    ...new Set([traceId, ...result.evidence.native_trace_ids]),
+  ].slice(0, 64);
+  return {
+    schema: "barena.run_bundle.v1",
+    run: {
+      run_id: result.run_id,
+      operation: "explore",
+      state: "completed",
+      input: {
+        scenario: result.scenario,
+        primary_trace_id: traceId,
+        trace_ids: traceIds,
+        evidence: {
+          primary_trace_id: traceId,
+          trace_ids: traceIds,
+        },
+      },
+      runtime: {
+        runtime: result.scenario.target.runtime,
+        role: result.runtime.target_role,
+        ...(result.scenario.target.skill && {
+          skill: result.scenario.target.skill,
+        }),
+      },
+      created_at: result.created_at,
+      updated_at: result.completed_at,
+    },
+    events,
+    terminal_fact_sha256: crypto
+      .createHash("sha256")
+      .update(JSON.stringify(terminal.payload))
+      .digest("hex"),
+  };
+}
+
+function retainedOtlpEnvelopes(
+  result: ExploreResultV1,
+): OtlpReceiverManifest["envelopes"] {
+  const manifestPath = containedRunFile(
+    result.paths.run_root,
+    result.evidence.otlp_manifest,
+  );
+  const manifest = readJson<OtlpReceiverManifest>(manifestPath);
+  if (manifest.schema !== "barena.otlp_receiver_manifest.v1") {
+    throw new Error("retained OTLP manifest schema is invalid");
+  }
+  if (manifest.envelopes.length !== manifest.envelope_count) {
+    throw new Error("retained OTLP manifest envelope count does not match");
+  }
+  if (manifest.envelope_count !== result.evidence.native_otlp_envelopes) {
+    throw new Error("retained OTLP manifest does not match Explore evidence");
+  }
+  return manifest.envelopes;
+}
+
+function readVerifiedEnvelope(
+  runRoot: string,
+  envelope: OtlpReceiverManifest["envelopes"][number],
+): Buffer {
+  if (
+    !/^application\/(?:json|x-protobuf|protobuf)(?:\s*;[^\r\n]*)?$/i.test(
+      envelope.content_type,
+    )
+  ) {
+    throw new Error("retained OTLP envelope content type is invalid");
+  }
+  const filePath = containedRunFile(runRoot, envelope.raw_ref);
+  const body = fs.readFileSync(filePath);
+  if (body.length !== envelope.bytes) {
+    throw new Error("retained OTLP envelope size does not match");
+  }
+  const hash = crypto.createHash("sha256").update(body).digest("hex");
+  if (hash !== envelope.sha256) {
+    throw new Error("retained OTLP envelope hash does not match");
+  }
+  return body;
+}
+
+function containedRunFile(runRoot: string, candidate: string): string {
+  const requestedRoot = path.resolve(runRoot);
+  const requested = path.isAbsolute(candidate)
+    ? path.resolve(candidate)
+    : path.resolve(requestedRoot, candidate);
+  const relative = path.relative(requestedRoot, requested);
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error("retained evidence path escapes the Explore Run");
+  }
+  const root = fs.realpathSync(requestedRoot);
+  const actual = fs.realpathSync(requested);
+  const actualRelative = path.relative(root, actual);
+  if (
+    actualRelative === ".." ||
+    actualRelative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(actualRelative) ||
+    !fs.statSync(actual).isFile()
+  ) {
+    throw new Error("retained evidence is not a regular Run file");
+  }
+  return actual;
+}
+
+function failPendingSync(record: ConnectedExploreSyncRecordV1): void {
+  record.status = "failed";
+  record.native_otlp.status = "failed";
+  record.native_otlp.failed_envelopes =
+    record.native_otlp.attempted_envelopes;
+  record.summary_otlp.status = "failed";
+  record.run_bundle.status = "failed";
+}
+
+function addSyncError(
+  record: ConnectedExploreSyncRecordV1,
+  stage: string,
+  error: unknown,
+): void {
+  if (record.errors.length >= 8) return;
+  const detail = `${stage}: ${safeError(error)}`.slice(0, 500);
+  if (!record.errors.includes(detail)) record.errors.push(detail);
+}
+
+function finishSyncRecord(
+  syncRef: string,
+  record: ConnectedExploreSyncRecordV1,
+): void {
+  record.completed_at = new Date().toISOString();
+  writeJson(syncRef, record);
 }
 
 function compactExploreFacts(result: ExploreResultV1): Record<string, unknown> {

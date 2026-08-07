@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import test from "node:test";
 import {
   BarenaPlatformClient,
   platformConnectionFromEnv,
+  type PlatformRunBundleV1,
 } from "../src/platform-client";
 import { engineEventFromExploreProgress } from "../src/explore";
 
@@ -39,7 +41,7 @@ test("platform client authenticates edge Run lifecycle without exposing the API 
   const client = new BarenaPlatformClient(
     {
       url: "http://127.0.0.1:5570",
-      apiKey: "sk-lw-test-project-key",
+      apiKey: "barena_pat_test-project-key",
     },
     { fetch: fakeFetch },
   );
@@ -64,15 +66,120 @@ test("platform client authenticates edge Run lifecycle without exposing the API 
   for (const call of calls) {
     assert.equal(
       new Headers(call.init?.headers).get("authorization"),
-      "Bearer sk-lw-test-project-key",
+      "Bearer barena_pat_test-project-key",
     );
-    assert.doesNotMatch(String(call.init?.body ?? ""), /sk-lw-/);
+    assert.doesNotMatch(String(call.init?.body ?? ""), /barena_pat_/);
   }
-  assert.match(calls[0]!.url, /\/api\/barena\/v1\/ingest\/runs$/);
+  assert.match(calls[0]!.url, /\/v1\/ingest\/runs$/);
   assert.equal(event.event_id, "run-edge.1");
   assert.equal(event.attempt_id, "turn-1");
   assert.equal(event.actor, "user_simulator");
   assert.equal(event.payload.source_schema, "barena.explore_progress.v1");
+});
+
+test("platform client keeps explicit legacy proxy paths while origin uses canonical OTLP", async () => {
+  const urls: string[] = [];
+  const fakeFetch: typeof fetch = async (input) => {
+    urls.push(String(input));
+    if (String(input).endsWith("/runs")) {
+      return new Response(
+        JSON.stringify({
+          run_id: "run-proxy",
+          request_id: "request-proxy",
+          origin: "edge",
+          operation: "explore",
+          state: "running",
+        }),
+        { status: 201 },
+      );
+    }
+    return new Response("{}", { status: 200 });
+  };
+  const canonical = new BarenaPlatformClient(
+    {
+      url: "http://127.0.0.1:5570/v1/ingest/",
+      apiKey: "barena_pat_canonical-key",
+    },
+    { fetch: fakeFetch },
+  );
+  await canonical.exportOtlpJson({ resourceSpans: [] });
+
+  const legacy = new BarenaPlatformClient(
+    {
+      url: "http://127.0.0.1:5570/api/barena/",
+      apiKey: "sk-lw-legacy-project-key",
+    },
+    { fetch: fakeFetch },
+  );
+  await legacy.createRun({ operation: "explore", input: {} });
+  await legacy.exportOtlpJson({ resourceSpans: [] });
+
+  assert.deepEqual(urls, [
+    "http://127.0.0.1:5570/v1/otlp/v1/traces",
+    "http://127.0.0.1:5570/api/barena/v1/ingest/runs",
+    "http://127.0.0.1:5570/api/otel/v1/traces",
+  ]);
+});
+
+test("Run Bundle falls back to the old standalone lifecycle and terminal facts compatibility retry", async () => {
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  let finishAttempts = 0;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    calls.push({ url: String(input), body });
+    if (String(input).endsWith("/run-bundles")) {
+      return new Response("not found", { status: 404 });
+    }
+    if (String(input).endsWith("/runs")) {
+      return new Response(
+        JSON.stringify({
+          run_id: "run-legacy-remote",
+          request_id: "request-legacy-remote",
+          origin: "edge",
+          operation: "explore",
+          state: "running",
+        }),
+        { status: 201 },
+      );
+    }
+    if (String(input).endsWith("/events")) {
+      return new Response(null, { status: 204 });
+    }
+    finishAttempts += 1;
+    if (finishAttempts === 1) {
+      return new Response(
+        JSON.stringify({ detail: 'invalid JSON request: json: unknown field "terminal_fact"' }),
+        { status: 400 },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        run_id: "run-legacy-remote",
+        request_id: "request-legacy-remote",
+        origin: "edge",
+        operation: "explore",
+        state: "completed",
+      }),
+      { status: 200 },
+    );
+  };
+  const client = new BarenaPlatformClient(
+    {
+      url: "http://127.0.0.1:5570",
+      apiKey: "barena_pat_fallback-key",
+    },
+    { fetch: fakeFetch },
+  );
+  const bundle = fixtureRunBundle();
+  const synced = await client.syncRunBundle(bundle, "barena:run-local:explore");
+
+  assert.equal(synced.transport, "legacy_lifecycle");
+  assert.equal(synced.remote_run_id, "run-legacy-remote");
+  assert.equal(calls.length, 5);
+  assert.equal(calls[2]!.body.run_id, "run-legacy-remote");
+  assert.equal(calls[2]!.body.event_id, "run-legacy-remote.1");
+  assert.deepEqual(calls[3]!.body.terminal_fact, bundle.events[0]!.payload);
+  assert.equal("terminal_fact" in calls[4]!.body, false);
 });
 
 test("platform connection requires a complete secure configuration", () => {
@@ -104,11 +211,11 @@ test("platform connection requires a complete secure configuration", () => {
   assert.deepEqual(
     platformConnectionFromEnv({
       BARENA_PLATFORM_URL: "https://barena.example.com",
-      BARENA_PLATFORM_API_KEY: "sk-lw-project-key",
+      BARENA_PLATFORM_API_KEY: "barena_pat_project-key",
     }),
     {
       url: "https://barena.example.com",
-      apiKey: "sk-lw-project-key",
+      apiKey: "barena_pat_project-key",
     },
   );
   assert.doesNotThrow(
@@ -119,3 +226,41 @@ test("platform connection requires a complete secure configuration", () => {
       })
   );
 });
+
+function fixtureRunBundle(): PlatformRunBundleV1 {
+  const payload = {
+    schema: "barena.explore_terminal_fact.v1",
+    status: "pass",
+    summary: "local result remains authoritative",
+  };
+  return {
+    schema: "barena.run_bundle.v1",
+    run: {
+      run_id: "run-local",
+      operation: "explore",
+      state: "completed",
+      input: { scenario: { scenario_id: "connected" } },
+      created_at: "2026-08-05T00:00:00.000Z",
+      updated_at: "2026-08-05T00:00:01.000Z",
+    },
+    events: [
+      {
+        schema: "barena.engine_event.v1",
+        event_id: "run-local.1",
+        run_id: "run-local",
+        sequence: 1,
+        timestamp: "2026-08-05T00:00:01.000Z",
+        operation: "explore",
+        kind: "terminal",
+        phase: "complete",
+        actor: "engine",
+        trace_id: "11111111111111111111111111111111",
+        payload,
+      },
+    ],
+    terminal_fact_sha256: crypto
+      .createHash("sha256")
+      .update(JSON.stringify(payload))
+      .digest("hex"),
+  };
+}

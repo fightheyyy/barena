@@ -60,6 +60,7 @@ export class XiaobaOSRuntimeAdapter implements AgentRuntimeAdapter {
   private readonly rolesRoot?: string;
   private readonly skillsRoot?: string;
   private readonly envAllowlist: string[];
+  private readonly envOverrides: Record<string, string>;
   private readonly probeTimeoutMs: number;
   private readonly maxOutputBytes: number;
   private readonly killGraceMs: number;
@@ -85,6 +86,7 @@ export class XiaobaOSRuntimeAdapter implements AgentRuntimeAdapter {
       ? path.resolve(config.skills_root)
       : installation.skills_root;
     this.envAllowlist = config.env_allowlist ?? [];
+    this.envOverrides = { ...(config.env_overrides ?? {}) };
     this.probeTimeoutMs = config.probe_timeout_ms ?? 5_000;
     this.maxOutputBytes = config.max_output_bytes ?? 4 * 1024 * 1024;
     this.killGraceMs = config.kill_grace_ms ?? 750;
@@ -281,6 +283,10 @@ export class XiaobaOSRuntimeAdapter implements AgentRuntimeAdapter {
     ];
     const secrets = [
       ...this.projectSecrets,
+      ...Object.entries(this.envOverrides)
+        .filter(([name]) => isSecretEnvironmentName(name))
+        .map(([, value]) => value)
+        .filter(Boolean),
       ...envNames
         .filter(isSecretEnvironmentName)
         .map((name) => process.env[name])
@@ -424,6 +430,7 @@ export class XiaobaOSRuntimeAdapter implements AgentRuntimeAdapter {
       telemetry,
       correlation,
       overrides: {
+        ...this.envOverrides,
         ...(this.projectRoot && { XIAOBA_PROJECT_ROOT: this.projectRoot }),
         ...(this.rolesRoot && { XIAOBA_ROLES_ROOT: this.rolesRoot }),
         ...(this.skillsRoot && { XIAOBA_SKILLS_ROOT: this.skillsRoot }),

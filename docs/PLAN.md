@@ -19,6 +19,20 @@ evaluator/evolution role turns; the TypeScript Engine owns deterministic
 Replay, artifact verification, and Release Check; Go owns workflow and durable
 records. Local/private subject execution remains beside the target via CLI.
 
+### Boundary cutover: local execution, Catena evidence/evolution
+
+- [x] Make local Explore/Replay/Compare and verifier output authoritative when
+      Catena is unavailable.
+- [x] Accept the standalone Catena API key and canonical `/v1` ingress paths
+      while retaining explicit legacy-proxy compatibility.
+- [x] Forward current-Run OTLP and synchronize one immutable Run Bundle only
+      after local evidence is sealed.
+- [x] Record `pending/synced/failed` synchronization state without converting a
+      local pass/fail/blocked result into a network failure.
+- [ ] Pull Catena draft candidates/Cases into the existing local Replay path.
+- [x] Treat Platform HTTP Explore and cloud Barena execution as legacy demo
+      compatibility; Catena's cloud Runtime is evolution-only.
+
 ### Embedded Runtime stop metrics
 
 - [x] Probe one configured XiaoBaOS installation and verify all four cloud
