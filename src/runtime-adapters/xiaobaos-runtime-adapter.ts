@@ -50,7 +50,7 @@ export class XiaobaOSRuntimeAdapter implements AgentRuntimeAdapter {
     output_protocol: "text",
     cancellation: true,
     telemetry: "native",
-    trace_context_propagation: false,
+    trace_context_propagation: true,
     target_enumeration: true,
   };
 

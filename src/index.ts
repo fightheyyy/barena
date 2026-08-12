@@ -10,6 +10,7 @@ export * from "./reports/report";
 export * from "./runs/catalog";
 export * from "./runs/path-safety";
 export * from "./runs/type-guards";
+export * from "./simulation";
 export * from "./subjects/github-importer";
 export * from "./subjects/importer";
 export * from "./subjects/scanner";

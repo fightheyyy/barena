@@ -88,6 +88,7 @@ flowchart LR
 | XiaoBaOS 多轮 `AgentRuntimeAdapter` | 可用；`probe/openSession/sendTurn/cancel/close` |
 | XiaoBaOS Role 枚举与 Explore | 可用；真实 UserCat → 目标 Role → InspectorCat → ReviewerCat |
 | OpenTelemetry / OTLP 统一 Trace | Explore 可用；内置 OTLP/HTTP 接收并解码为统一 span NDJSON |
+| Scripted Agent Simulation | 可用；复用 `AgentRuntimeAdapter` 多轮会话并向 Catena 导出 Run / Turn / Check Trace |
 | 三个产品 CLI 入口 | `explore`、`replay`、`compare` 均可执行；Replay/Compare 的交互式 TUI 配置待后续补齐 |
 | Engine Protocol / Node Worker | v1 已实现；支持服务端分配 Run ID、持久事件、取消与 hash-verified Run Package |
 | Barena Platform | 已选定并 fork Apache-2.0 LangWatch 底座；项目/API Key、OTLP 接入、Trace 搜索与 Waterfall 已完成真实 POC |
@@ -513,6 +514,7 @@ runs/skill-eval-.../
 ```text
 barena explore <scenario.json>
 barena replay <case.json> [--target-command ./driver]
+barena simulation run <case.json> [--otlp-traces-endpoint URL]
 barena compare <candidate-skill> (--case <case.json> | --suite skillsbench:starter)
 ```
 

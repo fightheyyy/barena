@@ -123,6 +123,9 @@ records. Local/private subject execution remains beside the target via CLI.
 - [x] Expose real `barena explore`, `barena replay`, and `barena compare`
       product commands over the implemented Explore, fixed-Case, and paired
       Skill engines; reject unknown commands even when combined with `--help`.
+- [x] Merge the attributed scripted Simulation lane onto the canonical
+      `AgentRuntimeAdapter`, preserving one session and exporting correlated
+      Run/Turn/Check spans to Catena without adding a second Runtime seam.
 
 ### Verified
 
@@ -143,6 +146,9 @@ records. Local/private subject execution remains beside the target via CLI.
 - [x] A fresh `barena@0.1.0` tarball installs in an empty consumer and runs `--version` and `--help`.
 - [x] Installed `dist` excludes the legacy XiaobaOS Arena runner, native input builder, and live-policy executor.
 - [x] Real local XiaobaOS 0.2.0 doctor reports the ordinary `chat` target contract ready without making a model call.
+- [x] Real XiaoBaOS Simulation run `agent-simulation-20260812083633-995bb1`
+      passed two turns and both checks; Catena retained Trace
+      `0c133a14cdd90f81d39c488b85f78aae` with nine correlated spans.
 - [x] Final diff passes whitespace checks and the public-route boundary test proves no Arena runner import.
 - [x] Public SkillsBench evidence integrity passes: selection SHA and poster
       validation ID match; 144 terminal rollouts, 90 verifier-admitted results,

@@ -78,7 +78,7 @@ flowchart LR
     NewCase -.-> Replay
 ```
 
-Current implementation covers fixed Case Replay, deterministic inspection/verification, paired aggregation, the release gate, and XiaoBaOS Role Explore. Explore executes real `user-cat`, target Role, `inspector-cat`, and `reviewer-cat` sessions through the ordinary chat surface. Fixed Replay continues to mark evaluator stages `not_applicable` when they did not actually run.
+Current implementation covers fixed Case Replay, deterministic inspection/verification, paired aggregation, the release gate, XiaoBaOS Role Explore, and an attributed scripted Simulation calibration lane. Explore executes real `user-cat`, target Role, `inspector-cat`, and `reviewer-cat` sessions through the ordinary chat surface. Simulation reuses the same `AgentRuntimeAdapter` lifecycle and emits a pass/fail/blocked scorecard rather than a release decision. Fixed Replay continues to mark evaluator stages `not_applicable` when they did not actually run.
 
 ### 3.1 Locked target architecture
 
@@ -240,9 +240,10 @@ For Explore, XiaoBaOS uses explicit full-history replay behind
 base-Skill roots, creates separate target/evaluator workspaces, enables the
 XiaoBaOS native OTel exporter, and ingests OTLP/HTTP protobuf on a loopback
 receiver. The receiver persists redacted envelopes and a Runtime-neutral span
-NDJSON projection. XiaoBaOS CLI chat does not currently accept an explicit
-W3C parent context, so native spans are correlated by resource attributes and
-MUST NOT be claimed as children of the Barena root trace.
+NDJSON projection. XiaoBaOS honors the `TRACEPARENT` environment supplied to
+ordinary chat, so Simulation can parent native session/model/tool spans under
+the matching Barena Turn. Correlation attributes remain available for receivers
+that cannot preserve parentage.
 
 ### 4.2 OpenClaw
 
@@ -402,6 +403,7 @@ barena list suites
 barena evaluate skill <path> --target <id> (--suite <id> | --case <case.json>)
 barena e2e probe --target <id>
 barena e2e run <case.json>
+barena simulation run <case.json> [--otlp-traces-endpoint URL]
 barena list runs
 barena show <run-id>
 barena report <run-id>

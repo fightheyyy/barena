@@ -16,10 +16,15 @@ import {
   loadExploreScenario,
   runConnectedExploreScenario,
 } from "../explore";
+import { loadAgentSimulationCase, runAgentSimulationCase } from "../simulation";
 import { OpenClawTargetAdapter } from "../targets/openclaw-target-adapter";
 import { PortableTargetAdapter } from "../targets/portable-target-adapter";
 import { XiaobaTargetAdapter } from "../targets/xiaoba-target-adapter";
-import type { XiaobaOSRuntimeAdapterConfig } from "../runtime-adapters";
+import {
+  XiaobaOSRuntimeAdapter,
+  type RuntimeTelemetryConfig,
+  type XiaobaOSRuntimeAdapterConfig,
+} from "../runtime-adapters";
 import { startGuide } from "./guide";
 import {
   initializeProjectConfig,
@@ -87,6 +92,12 @@ const VALUE_FLAGS = new Set([
   "max-turns",
   "timeout",
   "skill",
+  "otlp-traces-endpoint",
+  "otlp-protocol",
+  "otlp-headers",
+  "otel-service-name",
+  "traceparent",
+  "tracestate",
 ]);
 const KNOWN_COMMANDS = new Set([
   "compare",
@@ -106,6 +117,7 @@ const KNOWN_COMMANDS = new Set([
   "scan",
   "scorecard",
   "show",
+  "simulation",
   "tui",
   "version",
 ]);
@@ -277,6 +289,37 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
       if (result.status === "pass") return EXIT_SUCCESS;
       if (result.status === "unsafe") return 2;
       return EXIT_HELD;
+    }
+
+    if (effectiveCommand === "simulation" && subcommand === "run") {
+      const casePath = required(
+        positionals[0],
+        "Usage: barena simulation run <case.json> [--runs-root runs] [--otlp-traces-endpoint URL]"
+      );
+      const caseDefinition = loadAgentSimulationCase(casePath);
+      if (!isXiaobaOSTarget(caseDefinition.target.adapter)) {
+        throw new Error(
+          `Simulation Runtime ${caseDefinition.target.adapter} is not implemented on the canonical AgentRuntimeAdapter yet.`
+        );
+      }
+      const project = optionalProjectConfig(parsed.flags);
+      const profile = configuredProfile(project, "xiaobaos");
+      const config = createXiaobaRuntimeConfig(parsed.flags, project, profile);
+      const result = await runAgentSimulationCase(caseDefinition, {
+        runsRoot: resolvedRoot(parsed.flags, project, "runs"),
+        telemetry: simulationTelemetry(parsed.flags),
+        adapter: new XiaobaOSRuntimeAdapter({
+          ...config,
+          env_allowlist: [
+            ...new Set([
+              ...(config.env_allowlist ?? []),
+              ...(caseDefinition.target.env_allowlist ?? []),
+            ]),
+          ],
+        }),
+      });
+      printJson(result);
+      return result.status === "pass" ? EXIT_SUCCESS : EXIT_HELD;
     }
 
     if (effectiveCommand === "import" && subcommand === "skill") {
@@ -782,6 +825,48 @@ function createXiaobaRuntimeConfig(
   };
 }
 
+function simulationTelemetry(
+  flags: Record<string, FlagValue>
+): RuntimeTelemetryConfig | undefined {
+  const tracesEndpoint = stringFlag(flags["otlp-traces-endpoint"])
+    ?? process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+    ?? undefined;
+  if (!tracesEndpoint) return undefined;
+  const protocol = stringFlag(flags["otlp-protocol"])
+    ?? process.env.OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
+    ?? process.env.OTEL_EXPORTER_OTLP_PROTOCOL
+    ?? "http/protobuf";
+  if (protocol !== "http/protobuf" && protocol !== "http/json") {
+    throw new Error("--otlp-protocol must be http/protobuf or http/json");
+  }
+  const rawHeaders = stringFlag(flags["otlp-headers"])
+    ?? process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS
+    ?? process.env.OTEL_EXPORTER_OTLP_HEADERS;
+  return {
+    traces_endpoint: tracesEndpoint,
+    protocol,
+    headers: rawHeaders ? parseOtlpHeaders(rawHeaders) : undefined,
+    service_name: stringFlag(flags["otel-service-name"]) ?? undefined,
+    traceparent: stringFlag(flags.traceparent) ?? undefined,
+    tracestate: stringFlag(flags.tracestate) ?? undefined,
+  };
+}
+
+function parseOtlpHeaders(value: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const entry of value.split(",")) {
+    const separator = entry.indexOf("=");
+    if (separator <= 0) {
+      throw new Error("OTLP headers must use comma-separated name=value entries");
+    }
+    const name = decodeURIComponent(entry.slice(0, separator).trim());
+    const headerValue = decodeURIComponent(entry.slice(separator + 1).trim());
+    if (!name) throw new Error("OTLP header name must not be empty");
+    headers[name] = headerValue;
+  }
+  return headers;
+}
+
 function tuiXiaobaOptions(
   config: XiaobaOSRuntimeAdapterConfig,
   model?: string
@@ -887,6 +972,7 @@ Start here:
   barena explore --runtime xiaobaos --role <role-id> [--skill <skill-id>] --task "<objective>"
   barena replay <case.json> [--target-command ./driver]
   barena compare <candidate-skill> (--case <case.json> | --suite skillsbench:starter) [--attempts 2]
+  barena simulation run <case.json> [--otlp-traces-endpoint URL]
   barena init --target openclaw [--provider openai --model <model> --api-key-env OPENAI_API_KEY]
   barena eval skill <path>            # uses .barena/config.json defaults
   barena guide                        # compatibility Skill-evaluation guide
@@ -954,6 +1040,15 @@ deterministic Artifact verification, and replay aggregation.`);
 
 Runs the same target and Case without versus with the candidate Skill, then emits
 the verifier-backed lift, stability, regression, and cleared/held/rejected gate.`);
+    return;
+  }
+  if (command === "simulation") {
+    console.log(`Usage:
+  barena simulation run <case.json> [--runs-root runs] [--otlp-traces-endpoint URL]
+
+Runs attributed scripted turns against one AgentRuntimeAdapter session, applies
+deterministic final-response assertions, and optionally exports a correlated
+Run → Turn → Runtime → Check trace to Catena.`);
     return;
   }
   printHelp();
