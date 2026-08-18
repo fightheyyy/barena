@@ -52,6 +52,8 @@ export interface StartEvaluationTuiOptions {
   xiaobaSkillsRoot?: string;
   xiaobaEnvAllowlist?: string[];
   exploreModel?: string;
+  initialExploreTask?: string;
+  initialExploreMaxTurns?: number;
 }
 
 export async function startEvaluationTui(options: StartEvaluationTuiOptions = {}): Promise<void> {
@@ -64,6 +66,8 @@ export async function startEvaluationTui(options: StartEvaluationTuiOptions = {}
     xiaobaRoles: discovery.roles,
     xiaobaSkills: discovery.skills,
     exploreModel: options.exploreModel,
+    initialExploreTask: options.initialExploreTask,
+    initialExploreMaxTurns: options.initialExploreMaxTurns,
   });
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     console.log(renderEvaluationTui(state, { color: options.color ?? false, width: process.stdout.columns }));
@@ -74,6 +78,7 @@ export async function startEvaluationTui(options: StartEvaluationTuiOptions = {}
   process.stdin.setRawMode(true);
   process.stdin.resume();
   let active = true;
+  let activeExploreAbort: AbortController | undefined;
   let keyQueue: Promise<void> = Promise.resolve();
 
   const render = (): void => {
@@ -89,6 +94,7 @@ export async function startEvaluationTui(options: StartEvaluationTuiOptions = {}
     const cleanup = (): void => {
       if (!active) return;
       active = false;
+      activeExploreAbort?.abort("Barena TUI closed by user");
       process.stdin.off("keypress", onKeypress);
       process.stdout.off("resize", render);
       if (process.stdin.isRaw) process.stdin.setRawMode(false);
@@ -108,12 +114,31 @@ export async function startEvaluationTui(options: StartEvaluationTuiOptions = {}
         };
       }
       render();
-      await performEffect(transition.effect, runsRoot, options, (nextAction) => dispatch(nextAction), cleanup);
+      const exploreAbort = transition.effect.type === "run_explore"
+        ? new AbortController()
+        : undefined;
+      if (exploreAbort) activeExploreAbort = exploreAbort;
+      try {
+        await performEffect(
+          transition.effect,
+          runsRoot,
+          options,
+          (nextAction) => dispatch(nextAction),
+          cleanup,
+          exploreAbort?.signal
+        );
+      } finally {
+        if (activeExploreAbort === exploreAbort) activeExploreAbort = undefined;
+      }
     };
 
     const onKeypress = (text: string, key: { name?: string; ctrl?: boolean }): void => {
       if (!active || state.screen === "running") return;
       if (state.screen === "explore_running") {
+        if (key.ctrl && key.name === "c") {
+          activeExploreAbort?.abort("Explore cancelled by user");
+          return;
+        }
         if (key.name === "d") {
           void dispatch({ type: "key", name: key.name, text });
         }
@@ -141,7 +166,8 @@ async function performEffect(
   runsRoot: string,
   options: StartEvaluationTuiOptions,
   dispatch: (action: EvaluationTuiAction) => Promise<void>,
-  cleanup: () => void
+  cleanup: () => void,
+  signal?: AbortSignal
 ): Promise<void> {
   if (effect.type === "none") return;
   if (effect.type === "quit") {
@@ -198,6 +224,7 @@ async function performEffect(
         }),
         {
           runs_root: runsRoot,
+          signal,
           on_progress: async (event) => {
             await dispatch({ type: "explore_progress", event });
           },

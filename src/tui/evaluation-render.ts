@@ -166,7 +166,7 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
   }
   if (state.screen === "explore_task") {
     return [
-      heading("What should UserCat explore?", color),
+      heading("What behavior should Barena test?", color),
       row(
         "Target",
         `${state.exploreRuntime?.display_name ?? "Runtime"} / ${
@@ -180,7 +180,7 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
           : "Entire Agent configuration"
       ),
       "",
-      "Describe the behavior, user situation, or boundary you care about.",
+      "Describe the user situation or behavior you want confidence in.",
       `${paint(" YOU ", SELECTED_MARKER, color)} ${state.exploreTask}${paint(
         "▌",
         BOLD,
@@ -190,12 +190,12 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
       paint(
         state.exploreSkill
           ? "Use /skill clear to test the entire Agent instead."
-          : "Optional: type /skill to focus on an installed Skill.",
+          : "Optional: /agent <role-id> changes Agent · /skill focuses a Skill.",
         DIM,
         color
       ),
       paint(
-        'Example: "Use vague requests and check whether it asks the right follow-ups."',
+        'Example: "Give it a vague deployment problem and see whether it clarifies before acting."',
         DIM,
         color
       ),
@@ -250,7 +250,7 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
   if (state.screen === "explore_review") {
     const role = state.exploreRole;
     return [
-      heading("Ready to explore", color),
+      heading("Ready to test", color),
       "",
       row(
         "Target",
@@ -266,20 +266,12 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
       ),
       ...(state.exploreModel ? [row("Model", state.exploreModel)] : []),
       row("Objective", state.exploreTask),
-      row(
-        "Method",
-        "UserCat explores → InspectorCat inspects → ReviewerCat judges"
-      ),
-      row(
-        "Budget",
-        `Auto; stops when evidence is sufficient (safety cap ${state.exploreMaxTurns})`
-      ),
-      row("Model calls", `maximum ${state.exploreMaxTurns * 2 + 2}`),
-      row("Evidence", "conversation + workspace + required native OTel"),
-      row("Writes", "a new persisted run under runs/"),
+      "",
+      "Barena will simulate realistic users, inspect the execution evidence,",
+      "and turn reproducible behavior gaps into Replay Case candidates.",
       "",
       paint(
-        "This may call paid models. Press Enter to run; e edits the objective.",
+        "Press Enter to start · this may call your configured model provider.",
         GOLD,
         color
       ),
@@ -310,40 +302,46 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
     const behavior = issues.filter((issue) => issue.severity !== "info");
     const diagnostics = issues.filter((issue) => issue.severity === "info");
     return [
-      heading("Evaluation complete", color),
-      `${row("Target outcome", exploreOutcome(result.status, color))}`,
+      `${heading("Explore complete", color)}  ${exploreOutcome(result.status, color)}`,
       result.summary,
       "",
       row(
-        "Evidence",
+        "Evaluation",
         result.evidence.evidence_complete
-          ? "complete; evaluation ran successfully"
-          : "incomplete"
+          ? "complete · evidence retained"
+          : "could not verify · evidence incomplete"
       ),
-      row("Behavior", `${behavior.length} finding(s)`),
+      row("Findings", `${behavior.length} behavior gap(s)`),
       ...behavior.slice(0, 2).map(
-        (issue, index) => `${index + 1}. ${issue.summary}`
-      ),
-      row("Diagnostics", `${diagnostics.length} informational observation(s)`),
-      row(
-        "Conversation",
-        `${result.turns.filter((turn) => Boolean(turn.target)).length} interaction(s)`
+        (issue, index) => renderExploreFinding(issue, index)
       ),
       row(
-        "Tested focus",
+        "Replay Cases",
+        (result.replay_case_candidates?.length ?? 0)
+          ? `${result.replay_case_candidates.length} candidate(s) ready`
+          : "none generated"
+      ),
+      row(
+        "Tested",
         result.scenario.target.skill
           ? `${result.scenario.target.skill} Skill`
           : `${
               result.runtime?.target_role ?? result.scenario.target.role
             } complete Agent configuration`
       ),
+      ...(diagnostics.length
+        ? [paint(`${diagnostics.length} diagnostic observation(s) kept in the report.`, DIM, color)]
+        : []),
       "",
       paint(
-        "The target outcome is separate from whether Barena completed the evaluation.",
+        "c opens Replay Cases · v opens the conversation · the report keeps all evidence.",
         DIM,
         color
       ),
     ];
+  }
+  if (state.screen === "explore_cases" && state.exploreResult) {
+    return exploreCasesBody(state, width, height, color);
   }
   if (state.screen === "explore_transcript" && state.exploreResult) {
     return exploreTranscriptBody(state, width, height, color);
@@ -688,16 +686,16 @@ function workflowProgress(state: EvaluationTuiState, width: number, color: boole
       return paint("Evaluation complete · inspect outcome and evidence", DIM, color);
     }
     if (state.screen === "explore_review") {
-      return exploreSetupProgress(5, width, color);
+      return paint("1 Objective  →  [2 Start]  →  3 Result", DIM, color);
     }
     if (state.screen === "explore_role") {
-      return exploreSetupProgress(3, width, color);
+      return paint("Resolve target  →  [Agent]  →  Objective", DIM, color);
     }
     if (state.screen === "explore_runtime") {
-      return exploreSetupProgress(2, width, color);
+      return paint("[Runtime]  →  Agent  →  Objective", DIM, color);
     }
     if (state.screen === "explore_task" || state.screen === "explore_skill") {
-      return exploreSetupProgress(4, width, color);
+      return paint("[1 Objective]  →  2 Start  →  3 Result", DIM, color);
     }
     return paint("Explore setup", DIM, color);
   }
@@ -721,28 +719,6 @@ function workflowProgress(state: EvaluationTuiState, width: number, color: boole
     const value = step === active ? `[${step} ${label}]` : `${step} ${label}`;
     return step === active ? paint(value, `${BOLD}${GOLD}`, color) : paint(value, DIM, color);
   }).join("  →  ");
-}
-
-function exploreSetupProgress(
-  active: number,
-  width: number,
-  color: boolean
-): string {
-  const labels = ["Task", "Runtime", "Agent", "Objective", "Confirm"];
-  if (width < 58) {
-    return `${paint(`[${active}/5]`, `${BOLD}${GOLD}`, color)} ${
-      labels[active - 1]
-    }`;
-  }
-  return labels
-    .map((label, index) => {
-      const step = index + 1;
-      const value = step === active ? `[${step} ${label}]` : `${step} ${label}`;
-      return step === active
-        ? paint(value, `${BOLD}${GOLD}`, color)
-        : paint(value, DIM, color);
-    })
-    .join("  →  ");
 }
 
 function workflowStep(state: EvaluationTuiState): number {
@@ -1332,6 +1308,44 @@ function exploreOutcome(value: string, color: boolean): string {
   }
   return paint("COULD NOT VERIFY", GOLD, color);
 }
+function renderExploreFinding(
+  issue: { summary: string; evidence: string[] },
+  index: number
+): string {
+  const evidence = issue.evidence[0] ? `  [${issue.evidence[0]}]` : "";
+  return `${index + 1}. ${issue.summary}${evidence}`;
+}
+
+function exploreCasesBody(
+  state: EvaluationTuiState,
+  width: number,
+  height: number,
+  color: boolean
+): string[] {
+  const candidates = state.exploreResult?.replay_case_candidates ?? [];
+  const candidate = candidates[state.selected];
+  if (!candidate) {
+    return [heading("Replay Cases", color), "", "No Case candidate was generated."];
+  }
+  const contentWidth = Math.max(24, width - 2);
+  const lines = [
+    `${heading("Replay Case candidate", color)}  ${paint(`${state.selected + 1}/${candidates.length}`, DIM, color)}`,
+    "",
+    row("Finding", candidate.issue_summary),
+    row("Evidence", candidate.evidence.join(", ") || "not recorded"),
+    "",
+    paint("Reproduction prompt", `${BOLD}${GOLD}`, color),
+    ...wrapText(candidate.prompt, contentWidth),
+    "",
+    paint(
+      "Proposed from this Explore run. Review it, then promote it into Replay to protect the behavior.",
+      DIM,
+      color
+    ),
+  ];
+  return lines.slice(0, Math.max(3, height));
+}
+
 function footer(
   state: EvaluationTuiState,
   color: boolean,
@@ -1348,7 +1362,7 @@ function footer(
       : state.screen === "explore_runtime" || state.screen === "explore_role"
         ? "↑/↓ choose · Enter select · Esc back · q quit"
         : state.screen === "explore_task"
-          ? "Type objective · /skill optional · Enter review · ^U clear · Esc back"
+          ? "Type objective · /agent or /skill optional · Enter review · ^U clear · Esc back"
           : state.screen === "explore_skill"
             ? "Type to filter · ↑/↓ choose · Enter bind · Esc composer"
           : state.screen === "explore_review"
@@ -1356,9 +1370,11 @@ function footer(
             : state.screen === "explore_confirm"
               ? "y start · n/Esc cancel"
               : state.screen === "explore_running"
-                ? "d execution details · keep this terminal open"
+                ? "d execution details · Ctrl+C cancel safely · keep this terminal open"
               : state.screen === "explore_result"
-                ? "v conversation · e edit intent · h home · q quit"
+                ? "c Replay Cases · v conversation · e edit intent · h home · q quit"
+              : state.screen === "explore_cases"
+                ? "↑/↓ Cases · b result · q quit"
               : state.screen === "explore_transcript"
                 ? "↑/↓ conversation · b result · q quit"
     : ["baseline_role", "candidate", "target_command", "case"].includes(state.screen)

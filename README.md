@@ -250,20 +250,20 @@ npm link
 barena
 ```
 
-`barena` 和无参数的 `barena explore` 复用同一套全屏 TUI、键盘操作与审阅页。标准 80×24 终端会保留完整的 `BARENA` ASCII 首页；主内容使用无外框的开放画布，产品菜单只显示 Explore / Replay / Compare，DAG、历史运行和环境检查分别通过 `d`、`p`、`?` 打开。Explore 运行时会按 Explore / Inspect / Judge 三个阶段显示 UserCat、目标 Agent、InspectorCat 和 ReviewerCat 的真实可观察状态；详细视图只展示结构化运行事件，不展示或猜测模型内部思考。交互入口会按下面的顺序推进：
+`barena` 和无参数的 `barena explore` 复用同一套全屏 TUI。标准 80×24 终端会保留完整的 `BARENA` ASCII 首页；主内容使用无外框的开放画布，产品菜单只显示 Explore / Replay / Compare，DAG、历史运行和环境检查分别通过 `d`、`p`、`?` 打开。Explore 运行时会按 Explore / Inspect / Judge 三个阶段显示 UserCat、目标 Agent、InspectorCat 和 ReviewerCat 的真实可观察状态；详细视图只展示结构化运行事件，不展示或猜测模型内部思考。
+
+本机只有一个可用 XiaoBaOS 时，Barena 自动采用 Base Agent，主路径只剩三个动作：
 
 ```text
 Barena
-  → 选择 Explore
-  → 扫描并选择本机 Runtime
-  → 选择 XiaoBaOS Base（默认）或已安装 Role
   → 用自然语言描述想测试的行为
-      └─ 可选：输入 /skill 搜索并绑定一个已安装 Skill
-  → 审阅目标、测试焦点、自动预算和证据计划
-  → Enter 运行
+      ├─ 可选：/agent <role-id> 更换被测 Role
+      └─ 可选：/skill 搜索并聚焦一个已安装 Skill
+  → 审阅目标并按 Enter 运行
+  → 直接查看行为发现、证据与 Replay Case candidate
 ```
 
-Barena 会识别本机的 XiaoBaOS、OpenClaw、Claude Code、Codex 和 Hermes CLI，并把“已安装”与“Explore adapter 已可用”分开显示。当前只有 XiaoBaOS 是首个深度适配的 Explore Runtime；其他 Runtime 即使已安装也会标记为 `adapter pending`，不会假装能够运行。
+只有当 Runtime 或默认 Agent 无法唯一确定时，Barena 才回退到选择页。它会识别本机的 XiaoBaOS、OpenClaw、Claude Code、Codex 和 Hermes CLI，并把“已安装”与“Explore adapter 已可用”分开处理。当前只有 XiaoBaOS 是首个深度适配的 Explore Runtime；其他 Runtime 不会被假装成可运行目标。
 
 不使用 `/skill` 时，Barena 测试所选 Base/Role 的完整 Agent 配置；使用 `/skill` 只改变本次 Explore 的测试焦点，不会进入另一套工作流。交互模式由 UserCat 自动决定何时继续或结束，最多进行 6 次用户交互，不再要求使用者先理解并填写轮数。
 
@@ -290,7 +290,7 @@ barena explore \
   --roles-root /path/to/XiaoBa-CLI/roles
 ```
 
-一次 Explore 最多执行 `2 × max_turns + 2` 次模型调用：每轮 UserCat 与目标 Agent 各一次，结束后 InspectorCat 与 ReviewerCat 各一次。交互 TUI 默认采用最多 6 轮的 Auto 预算，并在运行前明确显示调用上限；自动化命令仍可通过 `--max-turns` 收紧预算。
+一次 Explore 最多执行 `2 × max_turns + 2` 次模型调用：每轮 UserCat 与目标 Agent 各一次，结束后 InspectorCat 与 ReviewerCat 各一次。交互 TUI 默认采用最多 6 轮的内部安全上限，由 UserCat 根据对话自然结束，不要求使用者配置轮数；自动化命令仍可通过 `--max-turns` 收紧预算。运行中按 `Ctrl+C` 会取消当前 Runtime turn 并保留已产生的证据。
 
 Explore 结果写入：
 
@@ -529,6 +529,7 @@ replay aggregation；`compare` 复用现有 no-Skill baseline / candidate Skill
 ```text
 barena
 barena explore
+barena explore "测试 Agent 面对含糊需求时是否先澄清"
 barena explore <scenario.json>
 barena explore --runtime xiaobaos --role <role> --task <objective>
 ```

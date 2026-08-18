@@ -84,11 +84,11 @@ Current implementation covers fixed Case Replay, deterministic inspection/verifi
 
 ```mermaid
 flowchart LR
-    Human["Selection-first terminal shell"] --> Task["Task<br/>Explore · Replay · Compare"]
-    Task --> Runtime["Runtime<br/>detected + adapter-ready"]
-    Runtime --> Target["Target profile<br/>Base · optional Role"]
-    Target --> Composer["Test Composer<br/>natural objective · optional /skill"]
-    Composer --> Control["Barena Control Plane<br/>registry · planner · policy"]
+    Human["barena explore"] --> Composer["Natural objective<br/>what behavior should be tested?"]
+    Composer --> Resolve["Progressive target resolution<br/>auto-detect Runtime · default Base"]
+    Resolve --> Override["Optional override<br/>/agent · /skill"]
+    Override --> Preview["One-screen plan preview"]
+    Preview --> Control["Barena Control Plane<br/>registry · planner · policy"]
     Commands["replay · explore · compare"] --> Control
     Control --> Engines["Replay / Explore Engines<br/>User Simulator · Inspector · Reviewer"]
     Engines --> Adapter["AgentRuntimeAdapter<br/>probe · session · turn · cancel · close"]
@@ -102,12 +102,27 @@ flowchart LR
     Engines --> Verifier["Artifact + Final-state Verifier"]
     OTLP --> EvidenceStore["Evidence Store"]
     Verifier --> EvidenceStore
-    EvidenceStore --> Results["RunSets · Compare · Release Gate"]
+    EvidenceStore --> Delivery["Immediate delivery<br/>Finding · Evidence · Replay Case"]
+    Delivery --> Results["RunSets · Compare · Release Gate"]
     Results -. "reviewed failure" .-> Cases["Replay Case Registry"]
     Cases -.-> Control
 ```
 
 Normative details, telemetry attributes, and invariants are in `docs/ARCHITECTURE.md`.
+
+Explore follows progressive disclosure. With one adapter-ready Runtime and an
+installed Base profile, `barena explore` MUST open directly in the natural
+objective Composer. Runtime and Role selection are not mandatory setup pages;
+they are shown as resolved context and become editable only through `/agent`
+or when discovery is genuinely ambiguous. `/skill` remains an optional focus.
+The preview asks for one explicit confirmation before paid model calls.
+
+The running surface presents the observable UserCat, target, InspectorCat and
+ReviewerCat activity because that makes an otherwise opaque multi-Agent test
+understandable. Those actors are execution detail, not configuration concepts.
+The terminal result leads with confirmed behavior findings, their evidence and
+generated Replay Case candidates. Raw OTLP counts, filesystem paths and model
+call budgets stay secondary.
 
 ### 3.2 Catena integration boundary
 

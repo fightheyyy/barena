@@ -27,6 +27,7 @@ export type EvaluationTuiScreen =
   | "explore_confirm"
   | "explore_running"
   | "explore_result"
+  | "explore_cases"
   | "explore_transcript"
   | "dag"
   | "baseline_role"
@@ -157,22 +158,31 @@ export function initialEvaluationTuiState(
     xiaobaRoles?: XiaobaRoleDescriptor[];
     xiaobaSkills?: XiaobaSkillDescriptor[];
     exploreModel?: string;
+    initialExploreTask?: string;
+    initialExploreMaxTurns?: number;
   } = {}
 ): EvaluationTuiState {
   const homeMode = options.homeMode ?? "skill";
+  const initialExplore = resolveAutomaticExploreTarget(
+    options.runtimes ?? [],
+    options.xiaobaRoles ?? []
+  );
+  const initialTask = options.initialExploreTask?.trim() ?? "";
   const initialScreen: EvaluationTuiScreen =
     homeMode === "product" && options.initialWorkflow === "explore"
-      ? "explore_runtime"
+      ? initialExplore.role
+        ? initialTask
+          ? "explore_review"
+          : "explore_task"
+        : initialExplore.runtime
+          ? "explore_role"
+          : "explore_runtime"
       : "home";
-  const selectedRuntime =
-    options.runtimes?.findIndex(
-      (runtime) => runtime.explore_support === "ready"
-    ) ?? -1;
   return {
     screen: initialScreen,
     homeMode,
     selected: initialScreen === "explore_runtime"
-      ? Math.max(0, selectedRuntime)
+      ? Math.max(0, initialExplore.runtimeIndex)
       : 0,
     runtimes: options.runtimes ?? [],
     xiaobaRoles: options.xiaobaRoles ?? [],
@@ -181,13 +191,18 @@ export function initialEvaluationTuiState(
     exploreSkillInput: "",
     exploreRoleInput: "",
     exploreRoleCandidateIds: [],
-    exploreTask: "",
-    exploreMaxTurns: AUTO_EXPLORE_MAX_TURNS,
+    exploreTask: initialTask,
+    exploreMaxTurns: Math.max(
+      1,
+      Math.floor(options.initialExploreMaxTurns ?? AUTO_EXPLORE_MAX_TURNS)
+    ),
     exploreTimeoutMs: 180_000,
     exploreConfirmInput: "",
     exploreDetails: false,
     exploreTranscriptOffset: 0,
     exploreProgress: [],
+    ...(initialExplore.runtime && { exploreRuntime: initialExplore.runtime }),
+    ...(initialExplore.role && { exploreRole: initialExplore.role }),
     ...(options.exploreModel && { exploreModel: options.exploreModel }),
     runtime: "xiaoba",
     capability: "skill",
@@ -403,7 +418,9 @@ export function reduceEvaluationTui(
 
   if (state.screen === "explore_task") {
     if (key === "escape") {
-      return next({ ...state, screen: "explore_role", selected: 0 });
+      return state.homeMode === "product"
+        ? next({ ...state, screen: "home", selected: 0 })
+        : next({ ...state, screen: "explore_role", selected: 0 });
     }
     if (action.ctrl && key === "u") return next({ ...state, exploreTask: "" });
     if (key === "backspace") {
@@ -503,6 +520,9 @@ export function reduceEvaluationTui(
   }
 
   if (state.screen === "explore_result") {
+    if (key === "c" && state.exploreResult?.replay_case_candidates.length) {
+      return next({ ...state, screen: "explore_cases", selected: 0 });
+    }
     if (key === "v" && state.exploreResult?.transcript.length) {
       return next({
         ...state,
@@ -521,6 +541,23 @@ export function reduceEvaluationTui(
       return state.homeMode === "product"
         ? next({ ...state, screen: "home", selected: 0 })
         : next({ ...state, screen: "explore_runtime", selected: 0 });
+    }
+    return next(state);
+  }
+
+  if (state.screen === "explore_cases") {
+    if (key === "escape" || key === "b") {
+      return next({ ...state, screen: "explore_result" });
+    }
+    const length = state.exploreResult?.replay_case_candidates.length ?? 0;
+    if (key === "down" || key === "j") {
+      return next({
+        ...state,
+        selected: Math.min(Math.max(0, length - 1), state.selected + 1),
+      });
+    }
+    if (key === "up" || key === "k") {
+      return next({ ...state, selected: Math.max(0, state.selected - 1) });
     }
     return next(state);
   }
@@ -720,6 +757,39 @@ function resolveExploreComposer(
   state: EvaluationTuiState
 ): EvaluationTuiTransition {
   const input = normalizeInput(state.exploreTask);
+  const agentCommand = input.match(
+    /^\/agent(?:\s+(\S+))?(?:\s+([\s\S]*))?$/i
+  );
+  if (agentCommand) {
+    const requested = agentCommand[1]?.trim();
+    const objective = agentCommand[2]?.trim() ?? "";
+    if (!requested) {
+      return next({
+        ...state,
+        screen: "error",
+        error: "Use /agent <role-id>, for example /agent engineer-cat.",
+        errorReturnScreen: "explore_task",
+      });
+    }
+    const role = resolveExploreRole(requested, state.xiaobaRoles);
+    if (!role) {
+      return next({
+        ...state,
+        screen: "error",
+        error: `Agent profile ${requested} was not found.`,
+        errorReturnScreen: "explore_task",
+      });
+    }
+    return next({
+      ...state,
+      screen: objective ? "explore_review" : "explore_task",
+      exploreRole: role,
+      exploreSkill: undefined,
+      exploreSkillInput: "",
+      exploreTask: objective,
+      selected: 0,
+    });
+  }
   const command = input.match(
     /^\/skill(?:\s+(\S+))?(?:\s+([\s\S]*))?$/i
   );
@@ -823,6 +893,42 @@ function resolveExploreSkill(
       skill.display_name.toLowerCase() === normalized
   );
   return exact.length === 1 ? exact[0] : undefined;
+}
+
+function resolveExploreRole(
+  requested: string,
+  roles: XiaobaRoleDescriptor[]
+): XiaobaRoleDescriptor | undefined {
+  const normalized = requested.trim().toLowerCase();
+  const exact = roles.filter((role) =>
+    [role.id, role.display_name, ...(role.aliases ?? [])]
+      .map((value) => value.toLowerCase())
+      .includes(normalized)
+  );
+  return exact.length === 1 ? exact[0] : resolveRoleFromIntent(requested, roles);
+}
+
+export function resolveAutomaticExploreTarget(
+  runtimes: LocalRuntimeDescriptor[],
+  roles: XiaobaRoleDescriptor[]
+): {
+  runtime?: LocalRuntimeDescriptor;
+  role?: XiaobaRoleDescriptor;
+  runtimeIndex: number;
+} {
+  const ready = runtimes
+    .map((runtime, index) => ({ runtime, index }))
+    .filter(({ runtime }) => runtime.explore_support === "ready");
+  if (ready.length !== 1 || ready[0].runtime.id !== "xiaobaos") {
+    return { runtimeIndex: ready[0]?.index ?? 0 };
+  }
+  const role = roles.find((candidate) => candidate.base_profile)
+    ?? (roles.length === 1 ? roles[0] : undefined);
+  return {
+    runtime: ready[0].runtime,
+    ...(role && { role }),
+    runtimeIndex: ready[0].index,
+  };
 }
 
 export function resolveRoleFromIntent(
@@ -1020,15 +1126,20 @@ function activateProductHomeItem(
   selected: number
 ): EvaluationTuiTransition {
   if (selected === 0) {
-    const ready = state.runtimes.findIndex(
-      (runtime) => runtime.explore_support === "ready"
+    const target = resolveAutomaticExploreTarget(
+      state.runtimes,
+      state.xiaobaRoles
     );
     return next({
       ...state,
-      screen: "explore_runtime",
-      selected: ready >= 0 ? ready : 0,
-      exploreRuntime: undefined,
-      exploreRole: undefined,
+      screen: target.role
+        ? "explore_task"
+        : target.runtime
+          ? "explore_role"
+          : "explore_runtime",
+      selected: target.runtime ? 0 : target.runtimeIndex,
+      exploreRuntime: target.runtime,
+      exploreRole: target.role,
       exploreSkill: undefined,
       exploreSkillInput: "",
       exploreTask: "",

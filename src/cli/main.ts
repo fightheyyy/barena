@@ -209,16 +209,32 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
     if (effectiveCommand === "explore") {
       const project = optionalProjectConfig(parsed.flags);
       const profile = configuredProfile(project, "xiaobaos");
-      const hasDirectInput =
-        Boolean(subcommand) ||
+      const positionalInput = [subcommand, ...positionals]
+        .filter((value): value is string => Boolean(value))
+        .join(" ")
+        .trim();
+      const scenarioInput = positionalInput &&
+        (positionalInput.toLowerCase().endsWith(".json") ||
+          fs.existsSync(path.resolve(positionalInput)))
+        ? positionalInput
+        : undefined;
+      const objectiveInput = positionalInput && !scenarioInput
+        ? positionalInput
+        : undefined;
+      const hasAutomationFlags =
         stringFlag(parsed.flags.role) !== null ||
         stringFlag(parsed.flags.task) !== null;
-      if (!hasDirectInput && process.stdin.isTTY && process.stdout.isTTY) {
+      if (!scenarioInput && !hasAutomationFlags && process.stdin.isTTY && process.stdout.isTTY) {
         const xiaoba = createXiaobaRuntimeConfig(parsed.flags, project, profile);
         await startEvaluationTui({
           runsRoot: resolvedRoot(parsed.flags, project, "runs"),
           homeMode: "product",
           initialWorkflow: "explore",
+          initialExploreTask: objectiveInput,
+          initialExploreMaxTurns:
+            parsed.flags["max-turns"] === undefined
+              ? undefined
+              : numberFlag(parsed.flags["max-turns"], 6),
           ...tuiXiaobaOptions(xiaoba, project?.config.provider?.model),
         });
         return EXIT_SUCCESS;
@@ -232,19 +248,16 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
           `Runtime ${runtime} may be installed, but its Barena Explore adapter is not implemented yet.`
         );
       }
-      const scenario = subcommand
-        ? loadExploreScenario(subcommand)
+      const scenario = scenarioInput
+        ? loadExploreScenario(scenarioInput)
         : createAdHocExploreScenario({
             role:
               stringFlag(parsed.flags.role) ??
               (profile?.kind === "xiaobaos" ? profile.role : undefined) ??
-              required(
-                undefined,
-                "Usage: barena explore --runtime xiaobaos --role <role> --task <objective>"
-              ),
+              "base",
             task: required(
-              stringFlag(parsed.flags.task) ?? undefined,
-              "Usage: barena explore --runtime xiaobaos --role <role> --task <objective>"
+              stringFlag(parsed.flags.task) ?? objectiveInput,
+              "Usage: barena explore <objective> [--role <role>]"
             ),
             scenario_id: stringFlag(parsed.flags["scenario-id"]) ?? undefined,
             model:
@@ -252,7 +265,7 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
               project?.config.provider?.model ??
               undefined,
             skill: stringFlag(parsed.flags.skill) ?? undefined,
-            max_turns: numberFlag(parsed.flags["max-turns"], 4),
+            max_turns: numberFlag(parsed.flags["max-turns"], 6),
             timeout_ms: numberFlag(parsed.flags.timeout, 180_000),
             env_allowlist: createXiaobaRuntimeConfig(
               parsed.flags,
@@ -968,8 +981,9 @@ function printHelp(): void {
 
 Start here:
   barena                              # full-screen product TUI: Explore / Replay / Compare
-  barena explore                      # same TUI, starting at Runtime selection
-  barena explore --runtime xiaobaos --role <role-id> [--skill <skill-id>] --task "<objective>"
+  barena explore                      # natural objective Composer; target is resolved automatically
+  barena explore "<objective>"         # prefill the Composer and review one resolved plan
+  barena explore --role <role-id> [--skill <skill-id>] --task "<objective>"
   barena replay <case.json> [--target-command ./driver]
   barena compare <candidate-skill> (--case <case.json> | --suite skillsbench:starter) [--attempts 2]
   barena simulation run <case.json> [--otlp-traces-endpoint URL]
@@ -1018,11 +1032,13 @@ function printCommandHelp(command: string): void {
   if (command === "explore") {
     console.log(`Usage:
   barena explore
+  barena explore "<objective>"
   barena explore <scenario.json>
-  barena explore --runtime xiaobaos --role <role-id> [--skill <skill-id>] --task "<objective>"
+  barena explore [--role <role-id>] [--skill <skill-id>] --task "<objective>"
 
 Runs the UserCat → target Agent → InspectorCat → ReviewerCat Explore DAG.
-Interactive use opens the shared product TUI; automation uses the same typed engine.`);
+Interactive use auto-detects XiaoBaOS and defaults to Base Agent; /agent and
+/skill progressively override that target. Automation uses the same typed engine.`);
     return;
   }
   if (command === "replay") {

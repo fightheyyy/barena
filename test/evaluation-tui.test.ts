@@ -10,7 +10,7 @@ import {
 } from "../src/tui/evaluation-model";
 import { renderEvaluationTui } from "../src/tui/evaluation-render";
 
-test("product TUI guides task, Runtime, Role, and /skill Composer into an Auto Explore plan", () => {
+test("product TUI auto-resolves Base and progressively accepts /agent and /skill overrides", () => {
   const runtimes = [
     {
       id: "xiaobaos" as const,
@@ -127,20 +127,16 @@ test("product TUI guides task, Runtime, Role, and /skill Composer into an Auto E
     type: "key",
     name: "return",
   }).state;
-  assert.equal(state.screen, "explore_runtime");
-  state = reduceEvaluationTui(state, {
-    type: "key",
-    name: "return",
-  }).state;
-  assert.equal(state.screen, "explore_role");
-  assert.equal(state.selected, 0);
+  assert.equal(state.screen, "explore_task");
+  assert.equal(state.exploreRuntime?.id, "xiaobaos");
+  assert.equal(state.exploreRole?.id, "base");
   assert.match(
     renderEvaluationTui(state, { width: 80, height: 24, color: false }),
-    /Base Agent.*default/
+    /XiaoBaOS \/ Base Agent/
   );
   state = reduceEvaluationTui(state, {
     type: "key",
-    name: "down",
+    text: "/agent secretary-cat",
   }).state;
   state = reduceEvaluationTui(state, {
     type: "key",
@@ -182,13 +178,11 @@ test("product TUI guides task, Runtime, Role, and /skill Composer into an Auto E
     height: 30,
     color: false,
   });
-  assert.match(review, /Ready to explore/);
+  assert.match(review, /Ready to test/);
   assert.match(review, /XiaoBaOS \/ SecretaryCat/);
   assert.match(review, /Focus\s+calendar Skill/);
-  assert.match(review, /Budget\s+Auto; stops when evidence is sufficient/);
-  assert.match(review, /safety cap 6/);
-  assert.match(review, /UserCat explores.*InspectorCat inspects.*ReviewerCat judges/);
-  assert.match(review, /Press Enter to run/);
+  assert.match(review, /turn reproducible behavior gaps into Replay Case candidates/);
+  assert.match(review, /Press Enter to start/);
 
   const run = reduceEvaluationTui(state, {
     type: "key",
@@ -268,15 +262,6 @@ test("Explore makes Base explicit and treats no /skill as the complete Agent", (
     xiaobaRoles: roles,
     initialWorkflow: "explore",
   });
-  state = reduceEvaluationTui(state, {
-    type: "key",
-    name: "return",
-  }).state;
-  assert.equal(state.screen, "explore_role");
-  state = reduceEvaluationTui(state, {
-    type: "key",
-    name: "return",
-  }).state;
   assert.equal(state.screen, "explore_task");
   assert.equal(state.exploreRole?.id, "base");
   state = reduceEvaluationTui(state, {
@@ -296,6 +281,41 @@ test("Explore makes Base explicit and treats no /skill as the complete Agent", (
   });
   assert.match(review, /Base Agent/);
   assert.match(review, /Entire Agent configuration/);
+});
+
+test("a positional Explore objective opens one resolved plan instead of setup screens", () => {
+  const state = initialEvaluationTuiState([], {
+    homeMode: "product",
+    initialWorkflow: "explore",
+    initialExploreTask: "Give it a vague deployment problem and see whether it clarifies first",
+    runtimes: [
+      {
+        id: "xiaobaos",
+        display_name: "XiaoBaOS",
+        command_name: "xiaoba",
+        installed: true,
+        explore_support: "ready",
+        detail: "ready",
+      },
+    ],
+    xiaobaRoles: [
+      {
+        id: "base",
+        display_name: "Base Agent",
+        path: "/tmp/roles",
+        evaluator_role: false,
+        base_profile: true,
+      },
+    ],
+  });
+
+  assert.equal(state.screen, "explore_review");
+  assert.equal(state.exploreRuntime?.id, "xiaobaos");
+  assert.equal(state.exploreRole?.id, "base");
+  assert.match(
+    renderEvaluationTui(state, { width: 80, height: 24, color: false }),
+    /Give it a vague deployment problem/
+  );
 });
 
 test("Explore TUI presents human phases by default and raw actor events on demand", () => {
@@ -427,12 +447,35 @@ test("Explore result separates successful evaluation from target outcome and exp
     height: 24,
     color: false,
   });
-  assert.match(rendered, /Evaluation complete/);
-  assert.match(rendered, /Target outcome\s+NEEDS IMPROVEMENT/);
-  assert.match(rendered, /Evidence\s+complete; evaluation ran successfully/);
-  assert.match(rendered, /Behavior\s+2 finding\(s\)/);
-  assert.match(rendered, /Diagnostics\s+2 informational observation\(s\)/);
+  assert.match(rendered, /Explore complete\s+NEEDS IMPROVEMENT/);
+  assert.match(rendered, /Evaluation\s+complete · evidence retained/);
+  assert.match(rendered, /Findings\s+2 behavior gap\(s\)/);
+  assert.match(rendered, /Replay Cases\s+1 candidate\(s\) ready/);
+  assert.match(rendered, /2 diagnostic observation\(s\) kept in the report/);
+  assert.match(rendered, /c opens Replay Cases/);
   assert.doesNotMatch(rendered, /Explore verdict\s+FAIL/);
+
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "c",
+    text: "c",
+  }).state;
+  assert.equal(state.screen, "explore_cases");
+  const cases = renderEvaluationTui(state, {
+    width: 80,
+    height: 24,
+    color: false,
+  });
+  assert.match(cases, /Replay Case candidate/);
+  assert.match(cases, /用户要求一句话后仍然过度解释/);
+  assert.match(cases, /请给我一句克制的朋友圈文案/);
+
+  state = reduceEvaluationTui(state, {
+    type: "key",
+    name: "b",
+    text: "b",
+  }).state;
+  assert.equal(state.screen, "explore_result");
 
   state = reduceEvaluationTui(state, {
     type: "key",
@@ -725,6 +768,25 @@ function exploreResult(): ExploreResultV1 {
         duration_ms: 1,
       },
     },
+    replay_case_candidates: [
+      {
+        schema: "barena.replay_case_candidate.v1",
+        candidate_id: "replay-behavior-2",
+        status: "proposed",
+        source: {
+          explore_run_id: "explore-demo",
+          scenario_id: "style-demo",
+          issue_id: "behavior-2",
+        },
+        target: {
+          runtime: "xiaobaos",
+          role: "xuan-sheng-di-jun",
+        },
+        prompt: "请给我一句克制的朋友圈文案。",
+        issue_summary: "用户要求一句话后仍然过度解释。",
+        evidence: ["turn 1"],
+      },
+    ],
     evidence: {
       evidence_complete: true,
     },

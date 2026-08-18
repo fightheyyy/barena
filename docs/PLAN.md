@@ -2,6 +2,20 @@
 
 Updated 2026-08-03.
 
+## Active milestone: Explore product polish
+
+- [x] Make `barena explore` enter the natural objective Composer directly when
+      XiaoBaOS and the Base profile are unambiguous.
+- [x] Add `/agent` alongside `/skill` as progressive target override instead of
+      mandatory Runtime/Role setup screens.
+- [x] Reduce the plan preview to target, focus, objective and one paid-run
+      confirmation; keep implementation diagnostics out of the main path.
+- [x] Lead the result with behavior findings, exact evidence and generated
+      Replay Case candidates.
+- [x] Verify the new path with reducer/render tests, the complete test suite and
+      a real XiaoBaOS run.
+- [ ] Record and export one Screen Studio demo of the complete journey.
+
 ## Current milestone: v0.6 Barena MVP1
 
 The publishable CLI evaluator, XiaoBaOS Explore, verifier-backed Replay/Compare,
