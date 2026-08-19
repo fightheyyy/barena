@@ -9,6 +9,16 @@ import {
   resolveRoleFromIntent,
 } from "../src/tui/evaluation-model";
 import { renderEvaluationTui } from "../src/tui/evaluation-render";
+import { discoverTuiTargets } from "../src/tui/evaluation-tui";
+
+test("product TUI discovers an explicitly configured DeepSeek Harness command", () => {
+  const dshCommand = new URL("./fixtures/targets/fake-dsh.mjs", import.meta.url).pathname;
+  const discovery = discoverTuiTargets({ dshCommand });
+  const runtime = discovery.runtimes.find((candidate) => candidate.id === "dsh");
+  assert.equal(runtime?.installed, true);
+  assert.equal(runtime?.command_path, dshCommand);
+  assert.equal(runtime?.explore_support, "ready");
+});
 
 test("product TUI auto-resolves Base and progressively accepts /agent and /skill overrides", () => {
   const runtimes = [
@@ -195,6 +205,50 @@ test("product TUI auto-resolves Base and progressively accepts /agent and /skill
     role: "secretary-cat",
     skill: "calendar",
     task: "Use vague planning requests and check whether it asks the right follow-ups",
+    maxTurns: AUTO_EXPLORE_MAX_TURNS,
+    timeoutMs: 180_000,
+  });
+});
+
+test("product TUI routes DeepSeek Harness directly to the natural-language objective", () => {
+  const runtimes = [
+    {
+      id: "xiaobaos" as const,
+      display_name: "XiaoBaOS",
+      command_name: "xiaoba",
+      command_path: "/opt/homebrew/bin/xiaoba",
+      installed: true,
+      explore_support: "ready" as const,
+      detail: "installed; Explore adapter available",
+    },
+    {
+      id: "dsh" as const,
+      display_name: "DeepSeek Harness",
+      command_name: "dsh",
+      command_path: "/opt/homebrew/bin/dsh",
+      installed: true,
+      explore_support: "ready" as const,
+      detail: "installed; Explore adapter available",
+    },
+  ];
+  let state = initialEvaluationTuiState([], { homeMode: "product", runtimes });
+  state = reduceEvaluationTui(state, { type: "key", name: "return" }).state;
+  assert.equal(state.screen, "explore_runtime");
+  state = reduceEvaluationTui(state, { type: "key", name: "down" }).state;
+  state = reduceEvaluationTui(state, { type: "key", name: "return" }).state;
+  assert.equal(state.screen, "explore_task");
+  assert.equal(state.exploreRuntime?.id, "dsh");
+  assert.equal(state.exploreRole, undefined);
+  state = reduceEvaluationTui(state, { type: "key", text: "测试部署边界" }).state;
+  state = reduceEvaluationTui(state, { type: "key", name: "return" }).state;
+  assert.equal(state.screen, "explore_review");
+  const transition = reduceEvaluationTui(state, { type: "key", name: "return" });
+  assert.equal(transition.state.screen, "explore_running");
+  assert.deepEqual(transition.effect, {
+    type: "run_explore",
+    runtime: "dsh",
+    role: "agent",
+    task: "测试部署边界",
     maxTurns: AUTO_EXPLORE_MAX_TURNS,
     timeoutMs: 180_000,
   });

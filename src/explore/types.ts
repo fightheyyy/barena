@@ -4,13 +4,14 @@ import type {
   RuntimeProbeResult,
   RuntimeTurnResult,
   XiaobaOSRuntimeAdapterConfig,
+  DshRuntimeAdapterConfig,
 } from "../runtime-adapters";
 
 export interface ExploreScenarioV1 {
   schema: "barena.explore_scenario.v1";
   scenario_id: string;
   target: {
-    runtime: "xiaobaos";
+    runtime: "xiaobaos" | "dsh";
     role: string;
     model?: string;
     skill?: string;
@@ -251,9 +252,11 @@ export interface ExploreRunOptions {
   signal?: AbortSignal;
   now?: () => Date;
   runtime_adapter?: AgentRuntimeAdapter;
+  target_runtime_adapter?: AgentRuntimeAdapter;
   root_trace_id?: string;
   otlp_forward?: OtlpForwardOptions;
   xiaoba?: XiaobaOSRuntimeAdapterConfig;
+  dsh?: DshRuntimeAdapterConfig;
   on_progress?: (
     event: ExploreProgressEvent
   ) => void | Promise<void>;

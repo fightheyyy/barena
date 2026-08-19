@@ -28,6 +28,13 @@ export function redactSecretsInDirectory(
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const fullPath = path.join(directory, entry.name);
       const relative = path.relative(absoluteRoot, fullPath);
+      // DSH installs its own pnpm dependency graph inside the run-private
+      // .barena-dsh profile. Those package-manager symlinks are Runtime
+      // implementation files, not target evidence, and treating them as
+      // unscanned artifacts makes every real DSH run fail closed. Keep
+      // scanning the rest of .barena-dsh (notably persisted sessions), while
+      // excluding only this Runtime-owned dependency subtree.
+      if (isDshRuntimeDependencyDirectory(relative, entry)) continue;
       if (entry.isSymbolicLink()) {
         unscannedFiles.push(relative);
         continue;
@@ -68,4 +75,13 @@ export function redactSecretsInDirectory(
     occurrences,
     unscanned_files: unscannedFiles.sort(),
   };
+}
+
+function isDshRuntimeDependencyDirectory(
+  relative: string,
+  entry: fs.Dirent
+): boolean {
+  if (!entry.isDirectory() || entry.name !== "node_modules") return false;
+  const parts = relative.split(path.sep);
+  return parts.includes(".barena-dsh") && parts.includes("profiles");
 }

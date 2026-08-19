@@ -4,6 +4,7 @@ import path from "node:path";
 import { boundaryEvent, writeBoundaryEvents } from "../e2e/boundary-trace";
 import {
   OtlpTraceReceiver,
+  DshRuntimeAdapter,
   RuntimeAdapterError,
   XiaobaOSRuntimeAdapter,
   resolveXiaobaInstallation,
@@ -14,6 +15,7 @@ import {
   type RuntimeProbeResult,
   type RuntimeTurnResult,
 } from "../runtime-adapters";
+import { ExploreRuntimeRouter } from "./runtime-router";
 import {
   isSecretEnvironmentName,
   readXiaobaProjectSecretValues,
@@ -165,7 +167,13 @@ export async function runExploreScenario(
       configuredInstallation,
       secrets
     );
-    adapter = createdRuntime.adapter;
+    adapter = scenario.target.runtime === "dsh"
+      ? new ExploreRuntimeRouter(
+          options.target_runtime_adapter ?? new DshRuntimeAdapter(options.dsh),
+          createdRuntime.adapter,
+          scenario.target.role
+        )
+      : createdRuntime.adapter;
     snapshotSecretRedaction = createdRuntime.secretRedaction;
   }
   const rootTraceId = resolveRootTraceId(options.root_trace_id);
@@ -1068,7 +1076,7 @@ async function invokeRole(input: {
         runId: input.runId,
         caseId: input.scenarioId,
         attemptId: input.attemptId,
-        component: `${input.adapter.id}:${input.role}`,
+        component: `${input.session.runtime_id}:${input.role}`,
         observedFrom: "target_input",
         kind: "user",
         message: input.prompt,
@@ -1088,7 +1096,7 @@ async function invokeRole(input: {
       telemetry: {
         traces_endpoint: input.receiver.endpoint,
         protocol: "http/protobuf",
-        service_name: `barena-xiaoba-${input.actor}`,
+        service_name: `barena-${input.session.runtime_id}-${input.actor}`,
         traceparent: `00-${input.rootTraceId}-${crypto.randomBytes(8).toString("hex")}-01`,
         export_timeout_ms: Math.min(input.timeoutMs, 10_000),
         resource_attributes: {
@@ -1097,7 +1105,7 @@ async function invokeRole(input: {
           "barena.attempt.id": input.attemptId,
           "barena.mode": "explore",
           "barena.arm": "single",
-          "barena.runtime.name": input.adapter.id,
+          "barena.runtime.name": input.session.runtime_id,
           "barena.session.id": input.session.session_id,
           "barena.actor": input.actor,
           "barena.evidence.source": "runtime_native",
@@ -1114,7 +1122,7 @@ async function invokeRole(input: {
               runId: input.runId,
               caseId: input.scenarioId,
               attemptId: input.attemptId,
-              component: `${input.adapter.id}:${input.role}`,
+              component: `${input.session.runtime_id}:${input.role}`,
               observedFrom: "target_stdout" as const,
               kind: "assistant" as const,
               message: result.assistant.content,
@@ -1134,7 +1142,7 @@ async function invokeRole(input: {
               runId: input.runId,
               caseId: input.scenarioId,
               attemptId: input.attemptId,
-              component: `${input.adapter.id}:${input.role}`,
+              component: `${input.session.runtime_id}:${input.role}`,
               observedFrom: "target_stderr" as const,
               kind: "runtime_status" as const,
               message: result.process.stderr.trim(),
@@ -1146,7 +1154,7 @@ async function invokeRole(input: {
         runId: input.runId,
         caseId: input.scenarioId,
         attemptId: input.attemptId,
-        component: `${input.adapter.id}:${input.role}`,
+        component: `${input.session.runtime_id}:${input.role}`,
         observedFrom: "target_process",
         kind: "runtime_status",
         message: result.detail,

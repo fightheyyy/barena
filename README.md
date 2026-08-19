@@ -60,7 +60,7 @@ flowchart LR
     Review --> NewCase
 ```
 
-当前版本已经落地两条执行路径：固定 Case Replay 用于保护已知能力；XiaoBaOS Explore 由真实 `user-cat` 驱动目标 Role 多轮交互，再由 `inspector-cat` 和 `reviewer-cat` 基于边界、Artifact 与原生 OTel 证据给出单次 `pass / fail / blocked / unsafe` 结论。Compare 是证明“候选方案是否优于基线”的可选操作，不再被误用为所有回归发布的必经步骤。
+当前版本已经落地两条执行路径：固定 Case Replay 用于保护已知能力；Explore 由 XiaoBaOS `user-cat` 驱动 XiaoBaOS 或 DeepSeek Harness 目标多轮交互，再由 `inspector-cat` 和 `reviewer-cat` 基于边界、Artifact 与可获取的 OTel 证据给出单次 `pass / fail / blocked / unsafe` 结论。Compare 是证明“候选方案是否优于基线”的可选操作，不再被误用为所有回归发布的必经步骤。
 
 ## 适用场景
 
@@ -87,6 +87,8 @@ flowchart LR
 | `barena` 选择式全屏 TUI | 可用；先选任务，再选 Runtime、Base/Role 与自然语言测试目标 |
 | XiaoBaOS 多轮 `AgentRuntimeAdapter` | 可用；`probe/openSession/sendTurn/cancel/close` |
 | XiaoBaOS Role 枚举与 Explore | 可用；真实 UserCat → 目标 Role → InspectorCat → ReviewerCat |
+| DeepSeek Harness Explore | 可用；公共 `dsh --profile headless`、完整可见历史回放、隔离 `DSH_HOME` |
+| Catena DSH Plugin 验收 | 可用；候选包只安装到本次运行的私有 Profile，绝不改全局配置 |
 | OpenTelemetry / OTLP 统一 Trace | Explore 可用；内置 OTLP/HTTP 接收并解码为统一 span NDJSON |
 | Scripted Agent Simulation | 可用；复用 `AgentRuntimeAdapter` 多轮会话并向 Catena 导出 Run / Turn / Check Trace |
 | 三个产品 CLI 入口 | `explore`、`replay`、`compare` 均可执行；Replay/Compare 的交互式 TUI 配置待后续补齐 |
@@ -154,7 +156,7 @@ flowchart LR
 
     UserCat["UserCat<br/>XiaobaOS · 模拟用户"]
     Adapter["AgentRuntimeAdapter<br/>统一调用不同Agent"]
-    Runtime["Target Runtime<br/>XiaobaOS · Claude Code · Codex<br/>OpenClaw · Hermes"]
+    Runtime["Target Runtime<br/>XiaobaOS · DeepSeek Harness<br/>Claude Code · Codex · OpenClaw · Hermes"]
     OTel["OpenTelemetry / OTLP<br/>统一Trace协议"]
     Artifact["Artifact + Verifier<br/>最终状态证据"]
     InspectorCat["InspectorCat<br/>XiaobaOS · 分析证据"]
@@ -263,7 +265,7 @@ Barena
   → 直接查看行为发现、证据与 Replay Case candidate
 ```
 
-只有当 Runtime 或默认 Agent 无法唯一确定时，Barena 才回退到选择页。它会识别本机的 XiaoBaOS、OpenClaw、Claude Code、Codex 和 Hermes CLI，并把“已安装”与“Explore adapter 已可用”分开处理。当前只有 XiaoBaOS 是首个深度适配的 Explore Runtime；其他 Runtime 不会被假装成可运行目标。
+只有当 Runtime 或默认 Agent 无法唯一确定时，Barena 才回退到选择页。它会识别本机的 XiaoBaOS、DeepSeek Harness、OpenClaw、Claude Code、Codex 和 Hermes CLI，并把“已安装”与“Explore adapter 已可用”分开处理。当前 XiaoBaOS 与 DeepSeek Harness 可直接用于 Explore；其他 Runtime 不会被假装成可运行目标。
 
 不使用 `/skill` 时，Barena 测试所选 Base/Role 的完整 Agent 配置；使用 `/skill` 只改变本次 Explore 的测试焦点，不会进入另一套工作流。交互模式由 UserCat 自动决定何时继续或结束，最多进行 6 次用户交互，不再要求使用者先理解并填写轮数。
 
@@ -289,6 +291,38 @@ barena explore \
   --xiaobaos-project-root /path/to/XiaoBa-CLI \
   --roles-root /path/to/XiaoBa-CLI/roles
 ```
+
+## Explore DeepSeek Harness / 验收 Catena Plugin
+
+Barena 只使用 DSH 的公共 headless CLI，不导入其内部实现。评测角色仍由
+XiaoBaOS 运行，被测目标切换为 DeepSeek Harness：
+
+```bash
+npm install -g @deepseek-ai/dsh
+dsh --version
+```
+
+```bash
+barena explore \
+  --runtime dsh \
+  --task "测试 Agent 在缺少关键约束时是否先澄清" \
+  --dsh-profile headless
+```
+
+要验证 Catena Trace Farm 生成的 Plugin，把下载后的包目录交给 Barena：
+
+```bash
+barena explore \
+  --runtime dsh \
+  --task "复现来源 Trace 中的失败模式" \
+  --dsh-plugin ./dsh-plugins/evidence-guard
+```
+
+Barena 会先校验 `package.json` 与 `cordis.patch.yml`，拒绝路径穿越和
+symlink，再将 Plugin 安装到目标 workspace 内的私有 DSH Profile。DSH 当前
+没有可供 Barena 使用的原生 trace-span 导出契约，因此报告会明确保留一个
+Barena-owned Turn bridge span 与 DSH session 文件引用，不会伪造 Model、Tool
+或隐藏推理 Span。
 
 一次 Explore 最多执行 `2 × max_turns + 2` 次模型调用：每轮 UserCat 与目标 Agent 各一次，结束后 InspectorCat 与 ReviewerCat 各一次。交互 TUI 默认采用最多 6 轮的内部安全上限，由 UserCat 根据对话自然结束，不要求使用者配置轮数；自动化命令仍可通过 `--max-turns` 收紧预算。运行中按 `Ctrl+C` 会取消当前 Runtime turn 并保留已产生的证据。
 
@@ -523,7 +557,7 @@ replay aggregation；`compare` 复用现有 no-Skill baseline / candidate Skill
 配对引擎并输出 `cleared / held / rejected`。旧的 `e2e run` 和
 `evaluate skill` 继续作为兼容别名。
 
-当前已经实现 `barena` 全屏产品入口和 `barena explore` 的 XiaoBaOS
+当前已经实现 `barena` 全屏产品入口和 `barena explore` 的 XiaoBaOS / DSH
 交互路径；`barena tui` 是同一产品 TUI 的兼容入口：
 
 ```text
@@ -532,6 +566,7 @@ barena explore
 barena explore "测试 Agent 面对含糊需求时是否先澄清"
 barena explore <scenario.json>
 barena explore --runtime xiaobaos --role <role> --task <objective>
+barena explore --runtime dsh --task <objective> [--dsh-plugin <package>]
 ```
 
 下面的兼容命令继续可用：
@@ -565,9 +600,9 @@ npm run pack:dry-run
 npm run test:platform
 ```
 
-回归测试覆盖选择式交互入口、XiaoBaOS Base/Role 多轮 Explore、UserCat/Inspector/Reviewer 严格 JSON、OTLP protobuf 接收与 span 解码、CLI/TUI、静态准入、路径与 symlink 防护、OpenClaw/Portable Driver、paired Skill evaluation、Artifact Verifier、run catalog、Engine Worker、Go Run API/SSE/取消和打包入口。
+回归测试覆盖选择式交互入口、XiaoBaOS Base/Role 与 DSH headless 多轮 Explore、私有 DSH Plugin Profile、UserCat/Inspector/Reviewer 严格 JSON、OTLP protobuf 接收与 span 解码、CLI/TUI、静态准入、路径与 symlink 防护、OpenClaw/Portable Driver、paired Skill evaluation、Artifact Verifier、run catalog、Engine Worker、Go Run API/SSE/取消和打包入口。
 
-项目仍处于早期版本。当前 CLI 可以运行 XiaoBaOS Explore、固定 Replay 与
+项目仍处于早期版本。当前 CLI 可以运行 XiaoBaOS / DeepSeek Harness Explore、固定 Replay 与
 Skill improvement Compare；v0.2 已加入稳定的 Engine Protocol 和 Go 本地控制面
 基础层，但 Web、通用 non-regression Release Check、Claude Code/Codex/OpenClaw
 的 Explore 深度适配仍属于后续切片。平台启动说明见

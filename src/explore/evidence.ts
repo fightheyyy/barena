@@ -13,7 +13,7 @@ export interface WorkspaceSnapshot {
   unsafe_entries: string[];
 }
 
-const EXCLUDED_TOP_LEVEL = new Set(["logs", ".barena-tmp"]);
+const EXCLUDED_TOP_LEVEL = new Set(["logs", ".barena-tmp", ".barena-dsh"]);
 const MAX_HASH_BYTES = 32 * 1024 * 1024;
 
 export function snapshotExploreWorkspace(root: string): WorkspaceSnapshot {

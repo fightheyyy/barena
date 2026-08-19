@@ -110,7 +110,7 @@ export type EvaluationTuiEffect =
   | { type: "quit" }
   | {
       type: "run_explore";
-      runtime: "xiaobaos";
+      runtime: "xiaobaos" | "dsh";
       role: string;
       skill?: string;
       task: string;
@@ -358,12 +358,24 @@ export function reduceEvaluationTui(
           errorReturnScreen: "explore_runtime",
         });
       }
-      if (runtime.id !== "xiaobaos") {
+      if (runtime.id !== "xiaobaos" && runtime.id !== "dsh") {
         return next({
           ...state,
           screen: "error",
           error: `Explore adapter is not available for ${runtime.display_name}.`,
           errorReturnScreen: "explore_runtime",
+        });
+      }
+      if (runtime.id === "dsh") {
+        return next({
+          ...state,
+          screen: "explore_task",
+          exploreRuntime: runtime,
+          exploreRole: undefined,
+          exploreSkill: undefined,
+          exploreSkillInput: "",
+          exploreTask: "",
+          selected: 0,
         });
       }
       if (!state.xiaobaRoles.length) {
@@ -502,10 +514,9 @@ export function reduceEvaluationTui(
       return next({ ...state, screen: "explore_review" });
     }
     if (
-      key === "y" &&
-      state.exploreRuntime?.id === "xiaobaos" &&
-      state.exploreRole &&
-      state.exploreTask
+      key === "y" && state.exploreTask &&
+      (state.exploreRuntime?.id === "dsh" ||
+        (state.exploreRuntime?.id === "xiaobaos" && state.exploreRole))
     ) {
       return beginExploreRun(state);
     }
@@ -757,6 +768,14 @@ function resolveExploreComposer(
   state: EvaluationTuiState
 ): EvaluationTuiTransition {
   const input = normalizeInput(state.exploreTask);
+  if (state.exploreRuntime?.id === "dsh" && /^\/(?:agent|skill)\b/i.test(input)) {
+    return next({
+      ...state,
+      screen: "error",
+      error: "DeepSeek Harness uses its selected headless profile. Use --dsh-plugin for a local Plugin candidate.",
+      errorReturnScreen: "explore_task",
+    });
+  }
   const agentCommand = input.match(
     /^\/agent(?:\s+(\S+))?(?:\s+([\s\S]*))?$/i
   );
@@ -1063,8 +1082,8 @@ function beginExploreRun(
   state: EvaluationTuiState
 ): EvaluationTuiTransition {
   if (
-    state.exploreRuntime?.id !== "xiaobaos" ||
-    !state.exploreRole ||
+    (state.exploreRuntime?.id !== "xiaobaos" && state.exploreRuntime?.id !== "dsh") ||
+    (state.exploreRuntime.id === "xiaobaos" && !state.exploreRole) ||
     !state.exploreTask
   ) {
     return next({
@@ -1085,9 +1104,9 @@ function beginExploreRun(
     },
     {
       type: "run_explore",
-      runtime: "xiaobaos",
-      role: state.exploreRole.id,
-      ...(state.exploreSkill && { skill: state.exploreSkill.id }),
+      runtime: state.exploreRuntime.id,
+      role: state.exploreRuntime.id === "dsh" ? "agent" : (state.exploreRole as XiaobaRoleDescriptor).id,
+      ...(state.exploreRuntime.id === "xiaobaos" && state.exploreSkill && { skill: state.exploreSkill.id }),
       task: state.exploreTask,
       maxTurns: state.exploreMaxTurns,
       timeoutMs: state.exploreTimeoutMs,

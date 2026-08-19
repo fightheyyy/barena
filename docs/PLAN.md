@@ -1,6 +1,6 @@
 # Barena Implementation Plan
 
-Updated 2026-08-03.
+Updated 2026-08-19.
 
 ## Active milestone: Explore product polish
 
@@ -15,6 +15,15 @@ Updated 2026-08-03.
 - [x] Verify the new path with reducer/render tests, the complete test suite and
       a real XiaoBaOS run.
 - [ ] Record and export one Screen Studio demo of the complete journey.
+
+## Active milestone: DeepSeek Harness release compatibility
+
+- [x] Route DSH target turns through the public headless CLI and a run-private
+      Profile while keeping evaluator roles on XiaoBaOS.
+- [x] Accept a validated Catena DSH Plugin bundle as an optional candidate.
+- [x] Disable package lifecycle scripts during private Profile installation and
+      verify a Catena-generated configuration bundle against real DSH.
+- [x] Commit and publish the DSH adapter, CLI/TUI surface and fixtures.
 
 ## Current milestone: v0.6 Barena MVP1
 
@@ -120,6 +129,10 @@ records. Local/private subject execution remains beside the target via CLI.
 - [x] Add a Runtime registry that detects XiaoBaOS, OpenClaw, Claude Code, Codex, and Hermes while distinguishing installation from Explore support.
 - [x] Add the canonical XiaoBaOS `AgentRuntimeAdapter` lifecycle with Role enumeration and explicit full-history replay.
 - [x] Add the XiaoBaOS Explore DAG: real UserCat → target Role → InspectorCat → ReviewerCat.
+- [x] Add DeepSeek Harness as a public-headless Explore target while keeping
+      all evaluator Roles on XiaoBaOS.
+- [x] Validate and install an optional Catena `dsh_plugin` only into a
+      run-private DSH Profile, with bridge telemetry and native session refs.
 - [x] Add a loopback OTLP/HTTP receiver, protobuf decoding, span NDJSON persistence, and target-native evidence completeness.
 - [x] Reuse the existing full-screen TUI shell for `barena`, interactive
       `barena explore`, Runtime/Role selection, review, confirmation, and result.
@@ -163,6 +176,16 @@ records. Local/private subject execution remains beside the target via CLI.
 - [x] Real XiaoBaOS Simulation run `agent-simulation-20260812083633-995bb1`
       passed two turns and both checks; Catena retained Trace
       `0c133a14cdd90f81d39c488b85f78aae` with nine correlated spans.
+- [x] Real official DeepSeek Harness `0.1.0-rc.7` Explore passed through the
+      unchanged XiaoBaOS evaluator DAG and synchronized four native OTLP
+      envelopes, seven local spans, one Barena summary Trace and one immutable
+      13-event Run Bundle to Catena. Catena retained the result under a bound
+      DSH Agent as one Session, one Trace and 20 correlated spans.
+- [x] A second DSH Explore synchronized a 26-Span Trace into Catena; Trace Farm
+      froze four DSH Traces and produced a strict two-file Plugin. DSH
+      `0.1.0-rc.7` installed that generated package with `--ignore-scripts`,
+      and `--dump-config` exposed the intended `system-prompt/config.persona`
+      override. The complete Barena suite passes with 203 tests.
 - [x] Final diff passes whitespace checks and the public-route boundary test proves no Arena runner import.
 - [x] Public SkillsBench evidence integrity passes: selection SHA and poster
       validation ID match; 144 terminal rollouts, 90 verifier-admitted results,

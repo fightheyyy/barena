@@ -338,6 +338,7 @@ function platformEndpoints(value: string): PlatformEndpoints {
 function validatePlatformApiKey(value: string): string {
   const apiKey = value.trim();
   const supportedPrefix = [
+    "catena_agent_",
     "barena_pat_",
     "sk-lw-",
     "pat-lw-",

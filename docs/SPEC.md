@@ -92,7 +92,7 @@ flowchart LR
     Commands["replay · explore · compare"] --> Control
     Control --> Engines["Replay / Explore Engines<br/>User Simulator · Inspector · Reviewer"]
     Engines --> Adapter["AgentRuntimeAdapter<br/>probe · session · turn · cancel · close"]
-    Adapter --> Runtimes["XiaobaOS · Claude Code · Codex<br/>OpenClaw · Portable CLI / Hermes"]
+    Adapter --> Runtimes["XiaobaOS · DeepSeek Harness<br/>Claude Code · Codex · OpenClaw · Hermes"]
 
     Control -. "W3C Trace Context" .-> Adapter
     Engines -. "evaluator spans" .-> OTLP["OTLP Gateway"]
@@ -133,6 +133,8 @@ the terminal release decision. It works without Catena.
 
 When a Catena API key is configured, the same local execution additionally:
 
+- accepts Catena's Agent-bound `catena_agent_*` credential while retaining
+  bounded compatibility with historical Platform key prefixes;
 - forwards correlated Runtime and Barena boundary OTLP;
 - synchronizes ordered Events and one immutable `barena.run_package.v1`;
 - records synchronization as `pending`, `synced`, or `failed` without changing
@@ -141,10 +143,11 @@ When a Catena API key is configured, the same local execution additionally:
 
 Catena owns durable Trace/Run history and embeds one dedicated XiaoBaOS
 Evolution Runtime. That Runtime consumes an Evidence Pack through InspectorCat,
-EvolutionCat, and ReviewerCat and emits draft Memory/Role/Skill/Harness/Case
-candidates. It never invokes the target Agent and never creates or changes a
-release verdict. The historical Platform HTTP Explore and cloud Replay paths
-remain migration/demo compatibility only and are not the target architecture.
+EvolutionCat, and ReviewerCat and emits draft `agent.md`, Skill, Role or
+Runtime-bound DSH Plugin assets. It never invokes the target Agent and never
+creates or changes a release verdict. The historical Platform HTTP Explore and
+cloud Replay paths remain migration/demo compatibility only and are not the
+target architecture.
 
 ```mermaid
 flowchart LR
@@ -168,8 +171,7 @@ must never parse human CLI output as a control protocol.
 
 The current per-Run OTLP receiver remains a scoped compatibility bridge because
 Inspector requires a bounded in-process evidence snapshot. Durable observation
-uses `fightheyyy/barena-platform`, selected after a real OTLP/JSON Explore trace
-passed ingestion, search, metadata/event, and waterfall acceptance.
+uses Catena through Agent-bound OTLP and immutable Run Bundle synchronization.
 
 The current embedded React/Chakra client is migration scaffolding. The target
 Web is the downstream fork with a Barena Release Workbench. Barena retains its
@@ -260,15 +262,44 @@ ordinary chat, so Simulation can parent native session/model/tool spans under
 the matching Barena Turn. Correlation attributes remain available for receivers
 that cannot preserve parentage.
 
-### 4.2 OpenClaw
+### 4.2 DeepSeek Harness
+
+The built-in DSH adapter uses only the public `dsh --profile headless` CLI.
+Each user turn invokes one fresh DSH session with the complete visible history,
+so the adapter reports `full-history-replay` rather than claiming native
+resume. Every Barena session receives a run-private `DSH_HOME`. The public
+`--dsh-patch` option forwards one validated regular patch file to DSH's native
+`--patch` launcher contract. An optional
+Catena `dsh_plugin` package is validated and installed into that private
+profile before target execution; the adapter rejects malformed manifests,
+missing Cordis patches, path escapes and symlinks.
+
+Plugin installation disables package lifecycle scripts. Catena-generated DSH
+Plugins use a configuration-only bundle contract: `package.json` declares the
+bundle and `cordis.patch.yml` overrides existing Profile rows. Barena still
+lets DSH itself validate the final composed Profile before treating target
+execution as evidence.
+
+DSH's current telemetry surface does not provide the trace-span contract that
+Barena requires. The adapter therefore emits one explicitly attributed
+Barena-owned Turn bridge span and retains observable DSH session files as
+native references. It never converts prose or session data into fabricated
+Model, Tool or hidden-reasoning spans.
+
+The evidence seal scans retained DSH session files for admitted Secret values,
+but excludes the run-private Profile's package-manager `node_modules` tree.
+That dependency graph is Runtime implementation state rather than target
+evidence; its pnpm symlinks cannot downgrade an otherwise complete run.
+
+### 4.3 OpenClaw
 
 The built-in OpenClaw adapter uses the local JSON Agent contract, binds an isolated workspace and exact Skill allowlist, and forbids delivery/reply flags. OpenClaw completion never overrides Artifact verification.
 
-### 4.3 Claude Code and Codex
+### 4.4 Claude Code and Codex
 
 Built-in adapters use their ordinary non-interactive Agent surfaces, preserve native session/resume semantics where available, and translate only observable boundary events into Barena-owned OTel spans. Genuine Runtime-native spans are ingested only through OTLP.
 
-### 4.4 Hermes and custom CLI Agents
+### 4.5 Hermes and custom CLI Agents
 
 Portable targets implement:
 
@@ -451,6 +482,10 @@ reviewed plan invokes the same strict engine as automation. Natural language
 and slash qualifiers do not bypass execution confirmation, static Skill
 admission, evidence requirements, or typed Scenario contracts.
 
+DeepSeek Harness is a selectable target Runtime. It has no Role or `/skill`
+selection page: after selecting DSH, the user writes the natural-language
+objective and may provide a candidate package through `--dsh-plugin`.
+
 ## 12. Acceptance criteria
 
 - XiaobaOS paired Skill execution reaches only ordinary `chat` commands.
@@ -467,6 +502,9 @@ admission, evidence requirements, or typed Scenario contracts.
   explicit Base/Role profile before opening the natural-language objective
   Composer; optional `/skill` selection is visible in the reviewed plan.
 - Runtime discovery distinguishes installed CLIs from implemented Explore adapters.
+- DeepSeek Harness Explore keeps UserCat, InspectorCat and ReviewerCat on the
+  XiaoBaOS evaluator Runtime while routing only target turns through the public
+  DSH headless CLI and its run-private Profile.
 - XiaoBaOS Explore invokes real UserCat, target Role, InspectorCat, and ReviewerCat sessions, receives and decodes native OTLP, and fails closed on malformed evaluator JSON.
 - `barena replay` executes a fixed Case through the verifier-backed replay
   engine, and `barena compare` executes baseline/candidate Skill arms through

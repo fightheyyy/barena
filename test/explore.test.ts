@@ -8,6 +8,7 @@ import { createAdHocExploreScenario, runExploreScenario } from "../src/explore";
 import type { ExploreProgressEvent } from "../src/explore";
 import { userSimulatorPrompt } from "../src/explore/prompts";
 import {
+  DshRuntimeAdapter,
   XiaobaOSRuntimeAdapter,
   listXiaobaSkills,
   listXiaobaTargetProfiles,
@@ -16,6 +17,8 @@ import { readNdjson } from "../src/utils/fs";
 
 const FIXTURES = path.resolve(__dirname, "fixtures");
 const FAKE_XIAOBA = path.join(FIXTURES, "targets", "fake-xiaoba-explore.mjs");
+const FAKE_DSH = path.join(FIXTURES, "targets", "fake-dsh.mjs");
+const DSH_PLUGIN = path.join(FIXTURES, "dsh-plugin");
 const XIAOBA_PROJECT = path.join(FIXTURES, "explore", "xiaoba-project");
 const ROLES_ROOT = path.join(XIAOBA_PROJECT, "roles");
 const SKILLS_ROOT = path.join(XIAOBA_PROJECT, "skills");
@@ -199,6 +202,101 @@ test("Explore runs the real four-actor DAG through XiaoBaOS and decodes native O
     )
   );
   assert.equal(progress.at(-1)?.stage, "complete");
+});
+
+test("Explore keeps XiaoBaOS evaluators while testing DeepSeek Harness through headless CLI", { concurrency: false }, async (t) => {
+  const root = temporaryRoot(t);
+  const dshLog = path.join(root, "dsh-argv.ndjson");
+  const previousLog = process.env.FAKE_DSH_LOG;
+  process.env.FAKE_DSH_LOG = dshLog;
+  t.after(() => restoreEnv("FAKE_DSH_LOG", previousLog));
+  const scenario = createAdHocExploreScenario({
+    runtime: "dsh",
+    role: "agent",
+    task: "帮助表达不完整的用户形成一个有时间约束的执行计划。",
+    max_turns: 4,
+    timeout_ms: 10_000,
+    env_allowlist: ["FAKE_DSH_LOG"],
+  });
+  const result = await runExploreScenario(scenario, {
+    runs_root: path.join(root, "runs"),
+    xiaoba: {
+      command: FAKE_XIAOBA,
+      project_root: XIAOBA_PROJECT,
+      roles_root: ROLES_ROOT,
+      skills_root: SKILLS_ROOT,
+    },
+    target_runtime_adapter: new DshRuntimeAdapter({
+      command: FAKE_DSH,
+      patch_path: path.join(DSH_PLUGIN, "cordis.patch.yml"),
+      plugin_path: DSH_PLUGIN,
+      env_allowlist: ["FAKE_DSH_LOG"],
+    }),
+  });
+
+  assert.equal(result.scenario.target.runtime, "dsh");
+  assert.equal(result.status, "pass", JSON.stringify(result));
+  assert.equal(result.runtime.probe.runtime_id, "dsh");
+  assert.equal(result.runtime.probe.version, "0.1.0-test");
+  assert.equal(result.turns.filter((turn) => turn.target).length, 2);
+  assert.equal(result.evidence.evidence_complete, true);
+  assert.equal(result.evidence.native_otlp_spans, 7);
+  assert.ok(result.evidence.workspace_changes.some((change) => change.path === "dsh-plan.md"));
+  assert.ok(result.evidence.native_trace_refs.some((ref) => ref.endsWith(".jsonl.zstd")));
+
+  const calls = readNdjson<string[]>(dshLog);
+  const pluginCalls = calls.filter((args) => args[0] === "plugin");
+  assert.equal(pluginCalls.length, 1);
+  assert.ok(pluginCalls[0].includes("--ignore-scripts"));
+  const targetCalls = calls.filter((args) => args.includes("--profile") && args[0] !== "plugin" && !args.includes("--help"));
+  assert.equal(targetCalls.length, 2);
+  assert.ok(targetCalls.every((args) => args.includes("--patch")));
+  assert.ok(targetCalls.every((args) => args.includes(path.join(DSH_PLUGIN, "cordis.patch.yml"))));
+  assert.match(targetCalls[1].at(-1) ?? "", /先确认今天唯一的硬截止/);
+});
+
+test("DeepSeek Harness rejects malformed or symlinked Plugin packages before execution", (t) => {
+  const root = temporaryRoot(t);
+  const malformed = path.join(root, "malformed");
+  fs.mkdirSync(malformed);
+  fs.writeFileSync(path.join(malformed, "package.json"), JSON.stringify({
+    name: "not-a-dsh-plugin",
+    version: "0.1.0",
+    dsh: { bundle: { patch: "./cordis.patch.yml" } },
+  }));
+  fs.writeFileSync(path.join(malformed, "cordis.patch.yml"), "- name: malformed\n");
+  assert.throws(
+    () => new DshRuntimeAdapter({ command: FAKE_DSH, plugin_path: malformed }),
+    /name must begin with dsh-plugin-/
+  );
+
+  const scripted = path.join(root, "scripted");
+  fs.mkdirSync(scripted);
+  fs.writeFileSync(path.join(scripted, "package.json"), JSON.stringify({
+    name: "dsh-plugin-scripted",
+    version: "0.1.0",
+    scripts: { postinstall: "curl https://example.invalid" },
+    dsh: { bundle: { patch: "./cordis.patch.yml" } },
+  }));
+  fs.writeFileSync(path.join(scripted, "cordis.patch.yml"), "- id: system-prompt\n  config:\n    persona: safe\n");
+  assert.throws(
+    () => new DshRuntimeAdapter({ command: FAKE_DSH, plugin_path: scripted }),
+    /must not declare lifecycle scripts/
+  );
+
+  const symlinked = path.join(root, "symlinked");
+  fs.mkdirSync(symlinked);
+  fs.writeFileSync(path.join(symlinked, "package.json"), JSON.stringify({
+    name: "dsh-plugin-symlinked",
+    version: "0.1.0",
+    dsh: { bundle: { patch: "./cordis.patch.yml" } },
+  }));
+  fs.writeFileSync(path.join(root, "outside.yml"), "- name: outside\n");
+  fs.symlinkSync(path.join(root, "outside.yml"), path.join(symlinked, "cordis.patch.yml"));
+  assert.throws(
+    () => new DshRuntimeAdapter({ command: FAKE_DSH, plugin_path: symlinked }),
+    /must not contain symlinks/
+  );
 });
 
 test("Explore fails closed and preserves raw evidence when Reviewer JSON is invalid", { concurrency: false }, async (t) => {

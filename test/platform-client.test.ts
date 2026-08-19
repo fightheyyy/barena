@@ -221,6 +221,13 @@ test("platform connection requires a complete secure configuration", () => {
   assert.doesNotThrow(
     () =>
       new BarenaPlatformClient({
+        url: "https://catena.example.com",
+        apiKey: "catena_agent_current-bound-key-1234567890",
+      })
+  );
+  assert.doesNotThrow(
+    () =>
+      new BarenaPlatformClient({
         url: "https://barena.example.com",
         apiKey: "pkey_legacy-project-key-1234567890",
       })

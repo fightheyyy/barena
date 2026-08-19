@@ -12,6 +12,7 @@ export function loadExploreScenario(filePath: string): ExploreScenarioV1 {
 }
 
 export function createAdHocExploreScenario(input: {
+  runtime?: "xiaobaos" | "dsh";
   role: string;
   task: string;
   scenario_id?: string;
@@ -29,7 +30,7 @@ export function createAdHocExploreScenario(input: {
     schema: "barena.explore_scenario.v1",
     scenario_id: scenarioId,
     target: {
-      runtime: "xiaobaos",
+      runtime: input.runtime ?? "xiaobaos",
       role,
       ...(input.model && { model: input.model }),
       ...(input.skill && { skill: input.skill }),
@@ -54,8 +55,8 @@ export function validateExploreScenario(value: unknown): ExploreScenarioV1 {
   }
   const scenarioId = safeId(root.scenario_id, "scenario_id");
   const target = record(root.target, "target");
-  if (target.runtime !== "xiaobaos") {
-    throw new Error("Explore v1 currently supports target.runtime=xiaobaos");
+  if (target.runtime !== "xiaobaos" && target.runtime !== "dsh") {
+    throw new Error("Explore v1 supports target.runtime=xiaobaos or target.runtime=dsh");
   }
   const role = safeId(target.role, "target.role");
   const objective = nonEmptyString(root.objective, "objective", 24_000);
@@ -85,12 +86,12 @@ export function validateExploreScenario(value: unknown): ExploreScenarioV1 {
     schema: "barena.explore_scenario.v1",
     scenario_id: scenarioId,
     target: {
-      runtime: "xiaobaos",
+      runtime: target.runtime,
       role,
       ...(optionalString(target.model, "target.model") && {
         model: optionalString(target.model, "target.model"),
       }),
-      ...(optionalString(target.skill, "target.skill") && {
+      ...(target.runtime === "xiaobaos" && optionalString(target.skill, "target.skill") && {
         skill: safeId(target.skill, "target.skill"),
       }),
       env_allowlist: envAllowlist,

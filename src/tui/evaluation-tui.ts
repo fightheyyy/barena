@@ -13,6 +13,7 @@ import {
   discoverLocalRuntimes,
   listXiaobaSkills,
   listXiaobaTargetProfiles,
+  resolveCommandOnPath,
   resolveXiaobaInstallation,
   type LocalRuntimeDescriptor,
   type XiaobaRoleDescriptor,
@@ -51,6 +52,10 @@ export interface StartEvaluationTuiOptions {
   xiaobaRolesRoot?: string;
   xiaobaSkillsRoot?: string;
   xiaobaEnvAllowlist?: string[];
+  dshCommand?: string;
+  dshProfile?: string;
+  dshPatchPath?: string;
+  dshPluginPath?: string;
   exploreModel?: string;
   initialExploreTask?: string;
   initialExploreMaxTurns?: number;
@@ -214,6 +219,7 @@ async function performEffect(
     try {
       const result = await runConnectedExploreScenario(
         createAdHocExploreScenario({
+          runtime: effect.runtime,
           role: effect.role,
           skill: effect.skill,
           task: effect.task,
@@ -235,6 +241,15 @@ async function performEffect(
             skills_root: options.xiaobaSkillsRoot,
             env_allowlist: options.xiaobaEnvAllowlist,
           },
+          ...(effect.runtime === "dsh" && {
+            dsh: {
+              command: options.dshCommand,
+              profile: options.dshProfile,
+              patch_path: options.dshPatchPath,
+              plugin_path: options.dshPluginPath,
+              env_allowlist: options.xiaobaEnvAllowlist,
+            },
+          }),
         }
       );
       await dispatch({ type: "explore_result", result });
@@ -283,7 +298,7 @@ async function performEffect(
   }
 }
 
-function discoverTuiTargets(options: StartEvaluationTuiOptions): {
+export function discoverTuiTargets(options: StartEvaluationTuiOptions): {
   runtimes: LocalRuntimeDescriptor[];
   roles: XiaobaRoleDescriptor[];
   skills: XiaobaSkillDescriptor[];
@@ -307,6 +322,19 @@ function discoverTuiTargets(options: StartEvaluationTuiOptions): {
         : runtime
     );
   }
+  const dshCommandPath = resolveTuiCommand(options.dshCommand);
+  if (dshCommandPath) {
+    runtimes = runtimes.map((runtime) =>
+      runtime.id === "dsh"
+        ? {
+            ...runtime,
+            installed: true,
+            command_path: dshCommandPath,
+            detail: "installed; Explore adapter available",
+          }
+        : runtime
+    );
+  }
   const roles = installation.roles_root
     ? listXiaobaTargetProfiles(installation.roles_root)
     : [];
@@ -316,6 +344,21 @@ function discoverTuiTargets(options: StartEvaluationTuiOptions): {
     roles,
     skills,
   };
+}
+
+function resolveTuiCommand(command: string | undefined): string | undefined {
+  const requested = command?.trim();
+  if (!requested) return undefined;
+  const candidate = requested.includes(path.sep)
+    ? path.resolve(requested)
+    : resolveCommandOnPath(requested);
+  if (!candidate) return undefined;
+  try {
+    fs.accessSync(candidate, fs.constants.X_OK);
+    return fs.statSync(candidate).isFile() ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function runPortableSkillEvaluation(

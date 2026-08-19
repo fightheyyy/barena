@@ -6,6 +6,7 @@ export type KnownRuntimeId =
   | "openclaw"
   | "claude-code"
   | "codex"
+  | "dsh"
   | "hermes";
 
 export interface LocalRuntimeDescriptor {
@@ -55,6 +56,7 @@ const RUNTIMES: Array<{
   { id: "openclaw", displayName: "OpenClaw", command: "openclaw", exploreSupport: "pending" },
   { id: "claude-code", displayName: "Claude Code", command: "claude", exploreSupport: "pending" },
   { id: "codex", displayName: "Codex", command: "codex", exploreSupport: "pending" },
+  { id: "dsh", displayName: "DeepSeek Harness", command: "dsh", exploreSupport: "ready" },
   { id: "hermes", displayName: "Hermes", command: "hermes", exploreSupport: "pending" },
 ];
 

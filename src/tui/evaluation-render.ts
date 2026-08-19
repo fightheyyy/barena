@@ -175,7 +175,9 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
       ),
       row(
         "Focus",
-        state.exploreSkill
+        state.exploreRuntime?.id === "dsh"
+          ? "Selected DSH profile"
+          : state.exploreSkill
           ? `${state.exploreSkill.display_name} Skill`
           : "Entire Agent configuration"
       ),
@@ -188,7 +190,9 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
       )}`,
       "",
       paint(
-        state.exploreSkill
+        state.exploreRuntime?.id === "dsh"
+          ? "DeepSeek Harness profile is the complete target."
+          : state.exploreSkill
           ? "Use /skill clear to test the entire Agent instead."
           : "Optional: /agent <role-id> changes Agent · /skill focuses a Skill.",
         DIM,
@@ -255,12 +259,16 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
       row(
         "Target",
         `${state.exploreRuntime?.display_name ?? "XiaoBaOS"} / ${
-          role ? `${role.display_name} (${role.id})` : "missing Role"
+          state.exploreRuntime?.id === "dsh"
+            ? "headless"
+            : role ? `${role.display_name} (${role.id})` : "missing Role"
         }`
       ),
       row(
         "Focus",
-        state.exploreSkill
+        state.exploreRuntime?.id === "dsh"
+          ? "Selected DSH profile"
+          : state.exploreSkill
           ? `${state.exploreSkill.display_name} Skill`
           : "Entire Agent configuration"
       ),
@@ -281,9 +289,9 @@ function screenBody(state: EvaluationTuiState, width: number, height: number, co
     return [
       heading("Start model-backed Explore?", color),
       "",
-      row("Target", `${state.exploreRuntime?.display_name ?? "XiaoBaOS"} / ${state.exploreRole?.id ?? "Role"}`),
+      row("Target", `${state.exploreRuntime?.display_name ?? "XiaoBaOS"} / ${state.exploreRuntime?.id === "dsh" ? "headless" : state.exploreRole?.id ?? "Role"}`),
       row("Maximum calls", String(state.exploreMaxTurns * 2 + 2)),
-      row("Evidence", "native OTLP required; missing evidence blocks the run"),
+      row("Evidence", state.exploreRuntime?.id === "dsh" ? "Barena Turn span + DSH session refs" : "native OTLP required; missing evidence blocks the run"),
       row("Isolation", "fresh workspaces + Role/Skill snapshots; policy_only"),
       row("Writes", "a new persisted run under runs/"),
       "",

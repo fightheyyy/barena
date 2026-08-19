@@ -21,6 +21,7 @@ import { OpenClawTargetAdapter } from "../targets/openclaw-target-adapter";
 import { PortableTargetAdapter } from "../targets/portable-target-adapter";
 import { XiaobaTargetAdapter } from "../targets/xiaoba-target-adapter";
 import {
+  DshRuntimeAdapter,
   XiaobaOSRuntimeAdapter,
   type RuntimeTelemetryConfig,
   type XiaobaOSRuntimeAdapterConfig,
@@ -92,6 +93,10 @@ const VALUE_FLAGS = new Set([
   "max-turns",
   "timeout",
   "skill",
+  "dsh-command",
+  "dsh-profile",
+  "dsh-patch",
+  "dsh-plugin",
   "otlp-traces-endpoint",
   "otlp-protocol",
   "otlp-headers",
@@ -154,6 +159,7 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
           homeMode: "product",
           initialWorkflow: "home",
           ...tuiXiaobaOptions(xiaoba, project?.config.provider?.model),
+          ...tuiDshOptions(parsed.flags),
         });
       } else {
         printHelp();
@@ -223,7 +229,8 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
         : undefined;
       const hasAutomationFlags =
         stringFlag(parsed.flags.role) !== null ||
-        stringFlag(parsed.flags.task) !== null;
+        stringFlag(parsed.flags.task) !== null ||
+        stringFlag(parsed.flags.runtime) !== null;
       if (!scenarioInput && !hasAutomationFlags && process.stdin.isTTY && process.stdout.isTTY) {
         const xiaoba = createXiaobaRuntimeConfig(parsed.flags, project, profile);
         await startEvaluationTui({
@@ -236,25 +243,23 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
               ? undefined
               : numberFlag(parsed.flags["max-turns"], 6),
           ...tuiXiaobaOptions(xiaoba, project?.config.provider?.model),
+          ...tuiDshOptions(parsed.flags),
         });
         return EXIT_SUCCESS;
       }
-      const runtime =
+      const runtime = normalizeExploreRuntime(
         stringFlag(parsed.flags.runtime) ??
         stringFlag(parsed.flags.target) ??
-        "xiaobaos";
-      if (!isXiaobaOSTarget(runtime)) {
-        throw new Error(
-          `Runtime ${runtime} may be installed, but its Barena Explore adapter is not implemented yet.`
-        );
-      }
+        "xiaobaos"
+      );
       const scenario = scenarioInput
         ? loadExploreScenario(scenarioInput)
         : createAdHocExploreScenario({
+            runtime,
             role:
               stringFlag(parsed.flags.role) ??
-              (profile?.kind === "xiaobaos" ? profile.role : undefined) ??
-              "base",
+              (runtime === "xiaobaos" && profile?.kind === "xiaobaos" ? profile.role : undefined) ??
+              (runtime === "dsh" ? "agent" : "base"),
             task: required(
               stringFlag(parsed.flags.task) ?? objectiveInput,
               "Usage: barena explore <objective> [--role <role>]"
@@ -264,7 +269,7 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
               stringFlag(parsed.flags.model) ??
               project?.config.provider?.model ??
               undefined,
-            skill: stringFlag(parsed.flags.skill) ?? undefined,
+            skill: runtime === "xiaobaos" ? stringFlag(parsed.flags.skill) ?? undefined : undefined,
             max_turns: numberFlag(parsed.flags["max-turns"], 6),
             timeout_ms: numberFlag(parsed.flags.timeout, 180_000),
             env_allowlist: createXiaobaRuntimeConfig(
@@ -276,6 +281,15 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
       const result = await runConnectedExploreScenario(scenario, {
         runs_root: resolvedRoot(parsed.flags, project, "runs"),
         xiaoba: createXiaobaRuntimeConfig(parsed.flags, project, profile),
+        ...(scenario.target.runtime === "dsh" && {
+          target_runtime_adapter: new DshRuntimeAdapter({
+            command: stringFlag(parsed.flags["dsh-command"]) ?? "dsh",
+            profile: stringFlag(parsed.flags["dsh-profile"]) ?? "headless",
+            patch_path: stringFlag(parsed.flags["dsh-patch"]) ?? undefined,
+            plugin_path: stringFlag(parsed.flags["dsh-plugin"]) ?? undefined,
+            env_allowlist: createXiaobaRuntimeConfig(parsed.flags, project, profile).env_allowlist,
+          }),
+        }),
       });
       printJson({
         schema: result.schema,
@@ -586,6 +600,7 @@ export async function runCli(argv: string[]): Promise<CliExitCode> {
           homeMode: "product",
           initialWorkflow: "home",
           ...tuiXiaobaOptions(xiaoba, project?.config.provider?.model),
+          ...tuiDshOptions(parsed.flags),
         });
       }
       return EXIT_SUCCESS;
@@ -753,6 +768,14 @@ function isXiaobaOSTarget(value: string): boolean {
   return value === "xiaobaos" || value === "xiaoba";
 }
 
+function normalizeExploreRuntime(value: string): "xiaobaos" | "dsh" {
+  if (isXiaobaOSTarget(value)) return "xiaobaos";
+  if (value === "dsh" || value === "deepseek-harness" || value === "deepseek") return "dsh";
+  throw new Error(
+    `Runtime ${value} may be installed, but its Barena Explore adapter is not implemented yet.`
+  );
+}
+
 function safeTargetId(value: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(value)) throw new Error("--target must be a safe runtime identifier");
   return value;
@@ -903,6 +926,20 @@ function tuiXiaobaOptions(
   };
 }
 
+function tuiDshOptions(flags: Record<string, FlagValue>): {
+  dshCommand?: string;
+  dshProfile?: string;
+  dshPatchPath?: string;
+  dshPluginPath?: string;
+} {
+  return {
+    ...(stringFlag(flags["dsh-command"]) && { dshCommand: stringFlag(flags["dsh-command"]) as string }),
+    ...(stringFlag(flags["dsh-profile"]) && { dshProfile: stringFlag(flags["dsh-profile"]) as string }),
+    ...(stringFlag(flags["dsh-patch"]) && { dshPatchPath: stringFlag(flags["dsh-patch"]) as string }),
+    ...(stringFlag(flags["dsh-plugin"]) && { dshPluginPath: stringFlag(flags["dsh-plugin"]) as string }),
+  };
+}
+
 function optionalProjectConfig(flags: Record<string, FlagValue>): LoadedProjectConfig | undefined {
   return loadProjectConfig(process.cwd(), stringFlag(flags.config) ?? undefined);
 }
@@ -984,6 +1021,7 @@ Start here:
   barena explore                      # natural objective Composer; target is resolved automatically
   barena explore "<objective>"         # prefill the Composer and review one resolved plan
   barena explore --role <role-id> [--skill <skill-id>] --task "<objective>"
+  barena explore --runtime dsh --task "<objective>" [--dsh-profile headless] [--dsh-patch ./override.yml] [--dsh-plugin ./plugin]
   barena replay <case.json> [--target-command ./driver]
   barena compare <candidate-skill> (--case <case.json> | --suite skillsbench:starter) [--attempts 2]
   barena simulation run <case.json> [--otlp-traces-endpoint URL]
@@ -1035,10 +1073,13 @@ function printCommandHelp(command: string): void {
   barena explore "<objective>"
   barena explore <scenario.json>
   barena explore [--role <role-id>] [--skill <skill-id>] --task "<objective>"
+  barena explore --runtime dsh --task "<objective>" [--dsh-command dsh]
+    [--dsh-profile headless] [--dsh-patch ./override.yml] [--dsh-plugin ./plugin]
 
 Runs the UserCat → target Agent → InspectorCat → ReviewerCat Explore DAG.
-Interactive use auto-detects XiaoBaOS and defaults to Base Agent; /agent and
-/skill progressively override that target. Automation uses the same typed engine.`);
+UserCat, InspectorCat, and ReviewerCat run in XiaoBaOS. The tested target may be
+XiaoBaOS or DeepSeek Harness; DSH uses its public headless CLI and a run-private
+profile. Automation and the TUI use the same typed engine.`);
     return;
   }
   if (command === "replay") {
